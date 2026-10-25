@@ -7,7 +7,12 @@ region orders, the order of operations with --deshadow (§6), the per-tile cost 
 
 The synthetic world's regions are z14 tiles (ColorMatch(region_z=14), 1.95 km) so a detection
 takes seconds; the feather field at the production scale (z12 regions) is built from seams laid
-out directly (FieldScaleTest)."""
+out directly (FieldScaleTest).
+
+FieldScaleTest's absolute timing budgets are a separate hardware benchmark. Set
+BNGE_PERF_TESTS=1 on an idle benchmark host and run:
+    python -m unittest discover -s server/tests -p test_colormatch.py -k test_per_tile_cost -v
+The ordinary regression suite always checks the field's numerical and rendered results."""
 import asyncio
 import hashlib
 import math
@@ -917,7 +922,6 @@ class FieldScaleTest(unittest.TestCase):
         G = cm.build_field(s, (0, 0), (192, 192), (64, 64), 256, self.CELL, cm.fade_cut(self.CELL, 256))
         self.assertLessEqual(float(np.abs(G.C).max()), cm.CLAMP + 1e-3)       # float16 storage
         self.assertGreater(float(np.abs(G.C).max()), cm.CLAMP - 0.01)
-        self.assertLess(self.build_s, 30)
 
     def test_removed_at_z16_and_coarser_zooms_follow(self):
         out = self.apply16()
@@ -942,8 +946,13 @@ class FieldScaleTest(unittest.TestCase):
             self.assertLess(float(diff[off_line].mean()), 0.6, z)
             self.assertLessEqual(int(np.percentile(diff[off_line], 99)), 3, z)
 
+    @unittest.skipUnless(os.environ.get("BNGE_PERF_TESTS") == "1",
+                         "hardware benchmark: set BNGE_PERF_TESTS=1 on an idle benchmark host")
     def test_per_tile_cost(self):
         """§7 test 9 (loose): < 10 ms per 256 px tile (best of three), unchanged tiles ~0."""
+        # Shared CI capacity/scheduling does not establish a hardware throughput baseline.
+        # Keep these budgets unchanged and opt in on the machine being benchmarked.
+        self.assertLess(self.build_s, 30)
         t = {}
         self.apply16(t)
         ms = {k: 1000 * float(np.max(v)) for k, v in t.items()}

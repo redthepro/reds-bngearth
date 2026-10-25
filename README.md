@@ -256,6 +256,10 @@ for its bundled LuaJIT on Windows). Run the two map suites with `node server/tes
 live map-download and long network-drive tests remain available separately. The Windows/Linux regression jobs
 must pass before release packages are built or published.
 
+Hardware timing budgets are opt-in because shared CI runners have variable throughput. On an idle benchmark PC,
+set `BNGE_PERF_TESTS=1` and run `python -m unittest discover -s server/tests -p test_colormatch.py -k test_per_tile_cost -v`.
+The ordinary regression suite still checks numerical accuracy, image output, and Lua/Python behavior agreement.
+
 `python server/tests/bench_loading.py` compares blocking and progressive terrain loading with controlled
 one-second imagery delays. It runs offline and checks that the texture bytes match; its timings isolate
 cosmetic waits rather than predicting an entire location's load time.
