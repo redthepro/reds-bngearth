@@ -110,6 +110,7 @@ def compute(server_dir):
             hello = dict(w.msgs[-1])
             hello.pop("sessionId")
             hello.pop("appVersion", None)     # the release (VERSION): changes every release
+            hello.pop("streaming", None)      # additive hardware profile; checked by protocol/streaming tests
             out["hello"] = hello
             c.status("Ready")
             out["status"] = w.msgs[-1]

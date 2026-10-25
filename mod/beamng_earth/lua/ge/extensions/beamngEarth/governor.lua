@@ -25,6 +25,7 @@
 -- cdaeTex128/256/512 by that size: texKind.)
 
 local stopwatch = require('beamngEarth/stopwatch')
+local streaming = require('beamngEarth/streaming')
 
 local M = {}
 
@@ -94,6 +95,7 @@ function M.new(opts)
   local g = setmetatable({
     clock = opts.clock or stopwatch.clock(),
     target = M.DEFAULT_TARGET_MS,
+    scale = 1, frameMs = streaming.FRAME_MS, focused = true,
     loading = false,
     b = 0,              -- current streaming budget, ms per frame
     bPrev = 0,          -- b of the previous frame
@@ -128,7 +130,15 @@ end
 
 function Gov:setLoading(on) self.loading = on and true or false end
 
-function Gov:targetNow() return self.loading and M.LOADING_TARGET_MS or self.target end
+function Gov:setFrameContext(frameMs, focused)
+  focused = focused ~= false
+  if self.frameMs ~= frameMs or self.focused ~= focused then
+    self.smoothMs, self.sampleWarmup = nil, 2 -- discard the old cap / background frame times
+  end
+  self.frameMs, self.focused = frameMs, focused
+end
+
+function Gov:targetNow() return self.loading and M.LOADING_TARGET_MS or self.target * self.scale end
 
 -- Largest estimated unit cost among the kinds in use.
 function Gov:maxUnit()
@@ -150,6 +160,14 @@ end
 function Gov:beginFrame(hasWork, wallMs)
   local t = self.clock()
   if wallMs == nil then wallMs = self.lastStart and (t - self.lastStart) or nil end
+  if (self.sampleWarmup or 0) > 0 then
+    self.sampleWarmup = self.sampleWarmup - 1
+  elseif self.focused and not self.loading and not self.prevHeavy and self.quiet == 0
+      and wallMs and self.w1 and self.w2 then
+    -- One import/driver hitch must not turn into a second of false overload as an EMA decays.
+    local sample = max(min(wallMs, self.w1), min(max(wallMs, self.w1), self.w2))
+    self.scale, self.smoothMs = streaming.adjust(self.scale, self.smoothMs, sample, self.frameMs)
+  end
   if wallMs and wallMs >= M.SLOW_MS then
     M.slow[#M.slow + 1] = { ms = math.floor(wallMs + 0.5), units = table.concat(self.frameLog, ' '),
       heavy = self.heavyFrame == self.frame, engineMs = self.lastEngineMs }
@@ -287,6 +305,7 @@ function Gov:isHeavyFrame() return self.heavyFrame == self.frame end
 
 function Gov:snapshot()
   return { b = self.b, tokens = self.tokens, target = self:targetNow(), loading = self.loading, base = self.base,
+    scale = self.scale, frameMs = self.smoothMs,
     heavyPending = self.heavyPending, estCdae = self.est.cdae, estDae = self.est.dae, estCdaeTex = self.est.cdaeTex,
     estCdaeTex128 = self.est.cdaeTex128, estCdaeTex256 = self.est.cdaeTex256, estCdaeTex512 = self.est.cdaeTex512,
     estMaterial = self.est.material, estMatDelete = self.est.matDelete, heavy = self.stats.heavy,

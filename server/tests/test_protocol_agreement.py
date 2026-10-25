@@ -99,7 +99,7 @@ MOD_TO_SERVER = {
     "prepare_terrain": {"requestId": F(int), "anchorId": F(int), "cx": F(NUM), "cy": F(NUM)},
     "commit_terrain": {"anchorId": F(int), "cx": F(NUM), "cy": F(NUM)},
     "pose": {"anchorId": F(int), "x": F(NUM), "y": F(NUM), "z": F(NUM), "vx": F(NUM), "vy": F(NUM), "lat": F(NUM),
-             "lon": F(NUM), "speed": F(NUM), "cam": F(dict, OPT),
+             "lon": F(NUM), "speed": F(NUM), "cam": F(dict, OPT), "streaming": F(dict, OPT),
              "follow": F(bool, OPT),        # false: the altitude rule holds the block (no prefetch)
              # previous anchors whose tile objects the mod still has (an empty Lua table may encode as {})
              "held": F((list, dict), OPT),
@@ -168,7 +168,7 @@ SERVER_TO_MOD = {
               "prewarm": F(str, OPT),           # the shape listing our shapes' materials (prewarm.py; with map data)
               # the world map's credits for its view: [[credit, w, s, e, n] or [credit]] per imagery source, and
               # the rest (weather, elevation); with imagery on only
-              "imageryCredits": F(list, OPT), "otherCredits": F(str, OPT)},
+              "imageryCredits": F(list, OPT), "otherCredits": F(str, OPT), "streaming": F(dict, OPT)},
     "status": {"text": F(str),
                "backlog": F(int),           # v1.4 M0: desired - shown far tiles of the current anchor
                "radius": F(NUM, OPT)},      # v1.4 M1h: the far-field radius (m), --horizon only

@@ -891,5 +891,20 @@ class OfflineTest(unittest.TestCase):
         self.assertEqual([a.offline for a in got], [True, False])
 
 
+class TimingTest(unittest.TestCase):
+    def test_queue_wait_separate_from_http_time(self):
+        policy = nf.HostPolicy(rate=1, burst=1, max_conc=1, daily_budget=None)
+        f, clock, sleep, tr = fetcher(script={".*": [(200, {}, b"abc", 0.1)]}, policies={USGS: policy})
+        f.get(url(), kind="urgent")
+        f.get(url(n=1), kind="urgent")
+        stats = f.snapshot()[USGS]
+        self.assertEqual(stats['timed_requests'], 2)
+        self.assertAlmostEqual(stats['http_ms'], 200, delta=0.01)
+        self.assertGreater(stats['wait_ms'], 800)
+        self.assertIn('avg wait/http', f.summary())
+        f.summary(reset=True)
+        self.assertNotIn('avg wait/http', f.summary())
+
+
 if __name__ == "__main__":
     unittest.main()

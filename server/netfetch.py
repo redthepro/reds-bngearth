@@ -538,7 +538,7 @@ class HttpsTransport:
 
 # --- per-host state ----------------------------------------------------------------------------
 COUNTERS = ("requests", "bytes", "s2xx", "s3xx", "s4xx", "s404", "s429", "s5xx", "errors", "retries",
-            "trips", "deferred", "unavailable")
+            "trips", "deferred", "unavailable", "wait_ms", "http_ms", "timed_requests")
 
 
 class Host:
@@ -750,7 +750,11 @@ class Fetcher:
                         raise HostUnavailable(f"{h.name} unavailable for {wait:.0f} s (circuit open)", url,
                                               h.name, retry_after=wait)
                     probe = probe or probe2
-                sem = self._acquire(h, url, kind)
+                queued = self.clock()
+                try:
+                    sem = self._acquire(h, url, kind)
+                finally:
+                    self._count(h, "wait_ms", max(0, self.clock() - queued) * 1000)
                 try:
                     self._count(h, "requests")
                     t0 = self.clock()
@@ -766,6 +770,8 @@ class Fetcher:
                     if NETLOG:
                         _netlog(url, hd, status, body)
                 finally:
+                    self._count(h, "http_ms", max(0, self.clock() - t0) * 1000)
+                    self._count(h, "timed_requests")
                     sem.release()
                 res = self._classify(h, url, status, {k.lower(): v for k, v in (rh or {}).items()}, body, elapsed)
                 probe = False               # the breaker has its verdict
@@ -950,7 +956,9 @@ class Fetcher:
                     extra = ", ".join(f"{k} {m[k]}" for k in ("s404", "s429", "s3xx", "s5xx", "errors", "retries",
                                                                "deferred", "unavailable", "trips") if m[k])
                     parts.append(f"{h.name} {m['requests']} req {m['bytes'] / 1e6:.1f} MB"
-                                 + (f" ({extra})" if extra else "") + f", today {h.day['requests']}")
+                                 + (f" ({extra})" if extra else "") + f", today {h.day['requests']}"
+                                 + (f", avg wait/http {m['wait_ms'] / m['timed_requests']:.0f}/"
+                                    f"{m['http_ms'] / m['timed_requests']:.0f} ms" if m['timed_requests'] else ""))
                 if reset:
                     h.minute = dict.fromkeys(COUNTERS, 0)
         down = self.unavailable_hosts()

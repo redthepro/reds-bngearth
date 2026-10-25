@@ -6,6 +6,7 @@ mod vegmask;
 mod roadgeom;
 mod shore;
 mod photofill;
+mod simd;
 
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3, IntoPyArray};
 use pyo3::types::PyBytes;
@@ -2007,6 +2008,9 @@ fn bilinear_grid<'py>(
         return Err(pyo3::exceptions::PyValueError::new_err("bilinear_grid: fx and fy differ in length"));
     }
     let out = py.allow_threads(|| {
+        if let (Some(gs), Some(x), Some(y)) = (g.as_slice(), xs.as_slice(), ys.as_slice()) {
+            return numpy::ndarray::Array1::from(simd::bilinear(gs, w, h, x, y));
+        }
         numpy::ndarray::Array1::from_shape_fn(xs.len(), |i| {
             let (x, y) = (xs[i], ys[i]);
             let ix = (x.floor() as i64).clamp(0, w as i64 - 2) as usize;
@@ -2267,6 +2271,40 @@ fn view_distances<'py>(py: Python<'py>, bboxes: PyReadonlyArray2<'py, f64>, px: 
         }).collect()
     });
     numpy::ndarray::Array1::from(out).into_pyarray(py)
+}
+
+/// Classify an entire visual build queue in one native call. Columns are priority (driving=0,
+/// visible=1, warm=2) and distance. No tile is culled: camera turns only reorder optional work.
+#[pyfunction]
+fn stream_priorities<'py>(py: Python<'py>, bboxes: PyReadonlyArray2<'py, f64>, player: Vec<f64>,
+                         view: Vec<f64>, cone: Vec<f64>, radius: f64, lead: f64)
+                         -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let b = bboxes.as_array();
+    if b.shape()[1] != 4 || player.len() != 4 || view.len() != 2 || (!cone.is_empty() && cone.len() != 5)
+        || !radius.is_finite() || radius < 0.0 || !lead.is_finite() || lead < 0.0
+        || player.iter().chain(view.iter()).chain(cone.iter()).chain(b.iter()).any(|v| !v.is_finite()) {
+        return Err(pyo3::exceptions::PyValueError::new_err("invalid streaming bounds or camera"));
+    }
+    let n = b.shape()[0];
+    let out = release(py, n * 24, || {
+        let (px, py_, ex, ey) = (player[0], player[1], player[0] + player[2] * lead, player[1] + player[3] * lead);
+        let (lx, ly, hx, hy) = (px.min(ex) - radius, py_.min(ey) - radius, px.max(ex) + radius, py_.max(ey) + radius);
+        let mut out = Vec::with_capacity(n * 2);
+        for row in b.rows() {
+            let (x0, y0, x1, y1) = (row[0], row[1], row[2], row[3]);
+            let driving = x0 <= hx && x1 >= lx && y0 <= hy && y1 >= ly;
+            let visible = cone.len() != 5 || {
+                let (cx, cy) = ((x0 + x1) / 2.0 - cone[0], (y0 + y1) / 2.0 - cone[1]);
+                let r = cx.hypot(cy);
+                r <= x1 - x0 || (cx * cone[2] + cy * cone[3]) / r >= cone[4]
+            };
+            let (vx, vy) = if driving { (px, py_) } else { (view[0], view[1]) };
+            let distance = (x0 - vx).max(0.0).max(vx - x1).hypot((y0 - vy).max(0.0).max(vy - y1));
+            out.extend_from_slice(&[if driving { 0.0 } else if visible { 1.0 } else { 2.0 }, distance]);
+        }
+        out
+    });
+    Ok(numpy::ndarray::Array2::from_shape_vec((n, 2), out).unwrap().into_pyarray(py))
 }
 
 /// vegetation._mask_roads' inner loop: the road corridors of segments (n, 4) [ax, ay, bx, by] in CHM grid px (column,
@@ -3889,6 +3927,8 @@ fn earthfast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(paint_lines, m)?)?;
     m.add_function(wrap_pyfunction!(photofill::fill_photo, m)?)?;
     m.add_function(wrap_pyfunction!(rtin_mesh, m)?)?;
-    m.add("VERSION", 68)?;
+    m.add_function(wrap_pyfunction!(stream_priorities, m)?)?;
+    m.add("SIMD_BACKEND", simd::name())?;
+    m.add("VERSION", 69)?;
     Ok(())
 }

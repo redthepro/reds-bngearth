@@ -1,16 +1,70 @@
-# BeamNG.Earth
+# BeamNG.Earth (Red's fork)
+
+This is [redthepro/reds-bngearth](https://github.com/redthepro/reds-bngearth), a fork of
+[TecnaGamer's BeamNG.Earth](https://github.com/TecnaGamer/BeamNG.Earth) focused on terrain loading,
+driving quality, and reliability. **Version 1.7.0 includes upstream 1.6.2-beta plus the changes below.**
+The original streamed world, map data integration, and BeamMP foundation come from TecnaGamer and the
+upstream contributors.
 
 A 1:1 scale, streamed Earth for [BeamNG.drive](https://www.beamng.com/): drive anywhere on the
 planet on real elevation data and satellite imagery, with distance-based level of detail and the
 real curvature of the Earth.
 
-Status: beta (see VERSION). Tested on BeamNG.drive 0.40.3 on Linux (Vulkan) and the Steam Deck. See
-[docs/ROADMAP.md](docs/ROADMAP.md) for what is coming.
+[Download this fork](https://github.com/redthepro/reds-bngearth/releases) ·
+[Report a fork issue](https://github.com/redthepro/reds-bngearth/issues) ·
+[Installation](#install-and-play) · [Changelog](CHANGELOG.md)
 
-**Community:** join the [Discord server](https://discord.gg/tgf) and head to the #beamng-earth channel to talk about
-the mod, report problems, and get an IP to join a BeamMP.Earth server (see [Multiplayer](#multiplayer-beammp)).
+## What this fork changes
 
-You can help support development by reporting [issues](https://github.com/TecnaGamer/BeamNG.Earth/issues), contributing code and sending pull requests, or [donating](https://ko-fi.com//tecnagamer). Thank You!
+Compared with upstream 1.6.2-beta:
+
+- **Terrain loading prioritizes driving.** Visual tiles along the car's predicted path are processed before
+  other visible tiles, then the surrounding reserve. Follow-up collision blocks wait at most 150 ms for their
+  aerial photo after heights are ready, at every driving speed; a slower photo arrives separately. Distant
+  imagery can appear before shadow correction finishes, and optional texture corrections pause at high speed.
+- **Streaming adapts to the running game.** Sustained slow frames and a growing import queue reduce optional
+  visual work, then restore it gradually. The controller respects the foreground FPS cap and ignores background
+  samples. Physics and road workers keep their separate queues; low-memory systems keep a smaller tile reserve.
+  Material reloads are also charged against the frame's streaming budget.
+- **Faster native elevation sampling.** Rust DEM resampling selects supported AVX2 or AVX-512 kernels at runtime,
+  briefly comparing them when both are available, with a scalar fallback. This accelerates terrain height
+  sampling while preserving the calculated heights; it does not replace BeamNG's renderer or vehicle physics.
+- **Smoother roads and cleaner pavement.** Road grading preserves slopes and shared endpoints to reduce bumps
+  between segments. Lane markings retain finer curves, mapped lane counts and widths take precedence over
+  estimates, and tighter terrain blending reduces grass and dirt showing through pavement.
+- **Better roadside placement and suburban buildings.** Roadside poles, signs, and their wires use terrain
+  heights at their actual positions. Additional townhouse tags and low-rise, pitched-roof defaults improve
+  eastern US suburbs, including Northern Virginia, while retaining mapped heights and roof types.
+- **Working lights at night.** Nearby street and pole lamps receive actual scene lights that follow dusk and
+  dawn, with distance fading and limits on how many lights are active or created at once.
+- **More resilient loading.** Invalid cached elevation blocks and map metadata are rebuilt, failed vegetation
+  requests wait before retrying, and reused terrain material slots retain the correct source material.
+  Network logs distinguish request-queue waits from HTTP time to help diagnose slow loading.
+- **Authenticated compute sharing and fork-specific updates.** Peer work uses authenticated, replay-protected
+  messages. BeamMP sharing credentials are scoped to a group's anchor, rotated when members leave, and cleared
+  on disconnect; automatic BeamMP compute sharing remains disabled by default, as in upstream 1.6.2.
+  Update checks and downloads use this fork's releases, with checksum verification and checks
+  that staged updates belong to the same repository.
+- **Automated builds for every main commit.** Windows and Linux regression tests gate compilation and packaged
+  startup checks. Successful pushes publish a Windows EXE, Linux AppImage, matching BeamMP server ZIP, and
+  `SHA256SUMS.txt`, under a release tag containing the version, workflow run, and commit.
+
+The test suite includes an **offline 200 mph terrain-coverage scenario with delayed heightmap loading**.
+It checks streaming coverage under controlled conditions; actual loading times and frame rates still depend on
+the PC, location, cache, network, and BeamNG. Personal graphics settings applied to a test PC are not shipped as
+a universal preset in this fork.
+
+Upstream improvements remain included, such as the BeamMP server browser and launcher integration, Windows file
+loading improvements, terrain shadow-stutter fixes, and bridge/tunnel loading repairs. See the
+[changelog](CHANGELOG.md) for the inherited releases and this fork's additions.
+
+Status: beta (see [VERSION](VERSION)); intended for BeamNG.drive 0.40.x. Upstream reports testing on 0.40.3
+with Linux (Vulkan) and Steam Deck. The retained [roadmap](docs/ROADMAP.md) documents upstream plans.
+
+**Community and credit:** the upstream [Discord server](https://discord.gg/tgf), #beamng-earth channel, is a place
+to discuss the original project and find BeamMP.Earth servers. Please report issues with this fork in
+[this repository](https://github.com/redthepro/reds-bngearth/issues). You can support the original developer through
+[TecnaGamer's donation page](https://ko-fi.com/tecnagamer); that link supports upstream development.
 
 ## Features (working today)
 **The world**
@@ -56,8 +110,8 @@ You can help support development by reporting [issues](https://github.com/TecnaG
   gravity really is weaker on a mountain or at the equator.
 
 **Driving and traffic**
-- Drive anywhere: the physics ground follows the car at 100+ mph, the world origin moves with you
-  (floating origin), and the world streams ahead of you; you never fall out of the world.
+- Physics terrain streams around and ahead of the car, while a floating origin keeps coordinates stable
+  over long drives.
 - Buildings, sidewalks, curbs and bridge decks are solid (lean collision meshes near the car keep the
   physics' collision rebuilds cheap).
 - Fast teleports: right after a teleport, while you wait, the world server may borrow some of the game's
@@ -126,7 +180,7 @@ You can help support development by reporting [issues](https://github.com/TecnaG
 as you visit places, up to 20 GB by default; settings page > "Download cache size" sets 5-50 GB), and an internet
 connection (the map is downloaded while you play).
 
-1. **Download** the file for your system from the [Releases](https://github.com/redthepro/bngearth/releases)
+1. **Download** the file for your system from the [Releases](https://github.com/redthepro/reds-bngearth/releases)
    page:
    - **Windows:** `BeamNG.Earth-<version>.exe`. Windows may warn about an unknown app: **More info > Run anyway**.
    - **Linux:** `BeamNG.Earth-<version>-x86_64.AppImage`. Make it executable (right-click > Properties >
@@ -175,7 +229,7 @@ authenticated and replay-protected, but not encrypted, so use a trusted network.
 `python3 install.py` also works from a checkout (mod copy, `.venv`, then `python3 start.py`); by hand:
 1. Python 3.10+ with the packages in `server/requirements.txt`. The server needs its Rust module: the checkout
    carries it built for Linux x86-64 (`server/earthfast.abi3.so`) and Windows (`server/earthfast.pyd`); after
-   changing `native/earthfast`, or on another system, build it with `python3 tools/build_native.py` (Rust's cargo;
+   changing `native/earthfast`, or on another system, build it with `python3 tools/build_native.py` (Rust 1.89+;
    `--windows` cross-builds the `.pyd` with cargo-zigbuild).
 2. Copy (or sync) `mod/beamng_earth/` to
    `<BeamNG user folder>/current/mods/unpacked/beamng_earth/`.
@@ -207,7 +261,7 @@ one-second imagery delays. It runs offline and checks that the texture bytes mat
 cosmetic waits rather than predicting an entire location's load time.
 
 **Fork update channel:** `UPDATE_REPO` selects the GitHub repository used for update checks and downloads
-(`redthepro/bngearth` here). Set `BNGE_UPDATE_REPO=owner/repository` to override it, or `BNGE_UPDATE_REPO=off`
+(`redthepro/reds-bngearth` here). Set `BNGE_UPDATE_REPO=owner/repository` to override it, or `BNGE_UPDATE_REPO=off`
 to disable updates. Missing or invalid configuration disables updates; it never falls back to upstream.
 Release builds embed the CI repository, unless explicitly overridden. Updates staged for another repository
 are not launched. A fork needs its own release assets before automatic updates can download anything.
@@ -255,7 +309,7 @@ listener. Old plugins/clients cannot authorize shared work and generation stays 
 trust with the group's credentials. No manual `BNGE_PEER_TOKEN` is needed for BeamMP sharing.
 
 **Hosting a server:** download `BeamNG.Earth-BeamMP-Server-<version>.zip` from the
-[Releases](https://github.com/redthepro/bngearth/releases) page and follow the guide inside
+[Releases](https://github.com/redthepro/reds-bngearth/releases) page and follow the guide inside
 (`BeamNG.Earth-README.md`). In short: unzip it into a BeamMP server's folder, set
 `Map = "/levels/beamng_earth/info.json"` in `ServerConfig.toml`, forward the server's port (TCP and UDP) for players
 over the internet, and start it (its log shows `[BeamNG.Earth] plugin loaded`). Which list it is on:

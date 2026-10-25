@@ -91,6 +91,7 @@ local crossover = require('beamngEarth/crossover')
 local lattice = require('beamngEarth/lattice')
 local satmat = require('beamngEarth/satmat')
 local governor = require('beamngEarth/governor')
+local streaming = require('beamngEarth/streaming')
 
 local floor, min, max, abs, huge, ln = math.floor, math.min, math.max, math.abs, math.huge, math.log
 local sqrt, deg, rad, atan, tan = math.sqrt, math.deg, math.rad, math.atan, math.tan
@@ -116,6 +117,12 @@ M.MAX_LEVEL = 9         -- coarsest level (server farfield.MAX_LEVEL); the horiz
                         -- are never under the player (they split within 328 km), so shownAt stops here
 M.EXACT_OFF = 0.01      -- m; an exact tile further than this off its height (crossover) is a miss
 M.RETEX_PER_FRAME = 2   -- far_retex material switches per frame at most (each also a governor unit)
+
+function M.configureReserve(profile)
+  if type(profile) ~= 'table' then return end -- older servers retain the current/default limits
+  local small = type(profile) == 'table' and profile.small == true
+  M.SPARE_MAX, M.SPARE_S = small and 64 or 400, small and 30 or 120
+end
 
 local pending = {}      -- key -> instance received but not shown yet (current anchor)
 local live = {}         -- key -> shown instance (current anchor), covered or not
@@ -1071,7 +1078,7 @@ end
 -- imports them (~0.7 textured tiles per frame): in server order the ground the car drives onto
 -- would wait behind distant tiles for seconds (the old anchor's or a coarser tile showing
 -- meanwhile). Terrain mode keeps the server's order (v1.2).
-local function peekImport(cam)
+local function peekImport(cam, player)
   while mH <= mT do
     local inst = mainQ[mH]
     if pending[inst.key] == inst and inst.queued then break end
@@ -1079,38 +1086,30 @@ local function peekImport(cam)
     mH = mH + 1
   end
   if mH <= mT then
-    if not meshLayout() or not cam then return mainQ[mH], true end
-    -- nearest the camera first; outside its view cone a tile counts VIEW_PENALTY times as far (squared here), so
-    -- what is on screen fills first (server/farfield.py view_distance, the same cone)
-    local fx, fy = cam.fx or 0, cam.fy or 0
-    local fn = sqrt(fx * fx + fy * fy)
-    local cosmax
-    if fn > 0.2 then
-      fx, fy = fx / fn, fy / fn
-      local half = deg(atan(tan(rad(cam.fovDeg or 60) / 2) * 16 / 9)) + M.VIEW_MARGIN_DEG
-      cosmax = math.cos(rad(min(half, M.VIEW_MAX_DEG)))
-    end
-    local pen2 = M.VIEW_PENALTY * M.VIEW_PENALTY
-    local best, bd = nil, huge
+    if not meshLayout() or not (cam or player) then return mainQ[mH], true end
+    local focus = cam or player
+    local classify = streaming.classifier(cam, player)
+    local best, bd, bc = nil, huge, huge
     for i = mH, mT do
       local inst = mainQ[i]
       if pending[inst.key] == inst and inst.queued then
-        local dx = max(inst.x0 - cam.x, 0, cam.x - inst.x1)
-        local dy = max(inst.y0 - cam.y, 0, cam.y - inst.y1)
+        local dx = max(inst.x0 - focus.x, 0, focus.x - inst.x1)
+        local dy = max(inst.y0 - focus.y, 0, focus.y - inst.y1)
         local d = dx * dx + dy * dy
-        if cosmax and d > 0 then
-          local cx, cy = (inst.x0 + inst.x1) / 2 - cam.x, (inst.y0 + inst.y1) / 2 - cam.y
-          local r = sqrt(cx * cx + cy * cy)
-          if r > inst.x1 - inst.x0 and (cx * fx + cy * fy) / r < cosmax then d = d * pen2 end
+        local cls = classify(inst)
+        if cls == 0 and player then
+          dx = max(inst.x0 - player.x, 0, player.x - inst.x1)
+          dy = max(inst.y0 - player.y, 0, player.y - inst.y1)
+          d = dx * dx + dy * dy
         end
-        if d < bd then best, bd = inst, d end
+        if cls < bc or (cls == bc and d < bd) then best, bd, bc = inst, d, cls end
       end
     end
-    return best, true
+    return best, true, bc
   end
   while pH <= pT do
     local inst = preQ[pH]
-    if pending[inst.key] == inst and inst.queued then return inst, false end
+    if pending[inst.key] == inst and inst.queued then return inst, false, 2 end
     preQ[pH] = nil
     pH = pH + 1
   end
@@ -1125,6 +1124,9 @@ end
 function M.hasWork()
   return nQueued > 0 or #doomed > 0 or rH <= rT or hasWaitingGroups() or satmat.hasDeletes() or satmat.hasRetex()
 end
+
+-- Pending engine imports, maintained as tiles enter/leave the queues (pose feedback must stay cheap).
+function M.queuedCount() return nQueued end
 
 local function pendingMainCount()
   local n = 0
@@ -1253,8 +1255,11 @@ function M.update(gov, dt, cam, player)
   --    or a sibling sharing the name re-uses it for free.
   local imported = false
   while true do
-    local inst = peekImport(cam)
+    local inst, _, priority = peekImport(cam, player)
     if not inst then break end
+    -- Off-screen reserve keeps making progress on struggling PCs, but cannot spend a full
+    -- frame's import budget each frame. Driving/visible tiles and swaps retain their budget.
+    if priority == 2 and (gov.scale or 1) < 0.5 and (gov.frame or 0) % 4 ~= 0 then break end
     if inst.material and not inst.mat and not inst.matFailed then
       local kind = not satmat.exists(inst.material) and 'material'
         or (satmat.needsRebind(inst.material, inst.texture) and 'retex' or nil)

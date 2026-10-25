@@ -2,6 +2,22 @@
 
 What changed in each release of BeamNG.Earth, newest first.
 
+## 1.7.0 (2026-10-25)
+
+- Visual streaming prioritizes the driving corridor, then the camera view, then surrounding warm-reserve tiles.
+  Turning the camera reprioritizes queued tiles without unloading nearby ground or changing collision coverage.
+- Sustained slow frames reduce visual imports and tell the server to reduce visual generation. Recovery is gradual;
+  FPS caps are respected and background samples ignored. Import-queue feedback prevents generation from running
+  too far ahead. Terrain/road worker lanes remain separate; low-memory machines retain fewer hidden tiles for reuse.
+- Native DEM resampling checks CPU support and briefly compares AVX-512 and AVX2 to select the faster supported
+  kernel. Terrain samples retain the same arithmetic and boundary behavior, with a portable fallback.
+  `BNGE_SIMD=scalar`, `avx2`, or `avx512` overrides selection for diagnostics (CPU support is always checked);
+  `python tools/bench_native.py` compares kernel timings and checks matching terrain heights.
+- Network logs distinguish time waiting for a request slot from HTTP request time. Existing keep-alive connections,
+  retries, and host limits remain in effect.
+- Includes upstream 1.6.2 and the fork's road, night-lighting, cache recovery, streaming, and security improvements.
+  Every main commit runs cross-platform tests and publishes Windows EXE, Linux AppImage, BeamMP ZIP, and checksums.
+
 ## 1.6.2 beta (2026-10-24)
 
 Works with BeamNG.drive 0.40.3.

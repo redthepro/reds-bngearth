@@ -78,6 +78,8 @@ from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 from dataclasses import dataclass, field, replace  # noqa: E402
 
 import numpy as np  # noqa: E402
+import streaming  # noqa: E402
+import budget  # noqa: E402
 from PIL import Image  # noqa: E402
 
 import blockworker  # noqa: E402
@@ -2505,6 +2507,7 @@ class Connection:
         self.view_at = None             # the camera's x, y there when it is VIEW_AWAY_M or more from the car, else None
         self.foci = ()                  # other vehicles' collision foci there ((x, y, r, trees), parse_foci)
         self.vel = (0.0, 0.0)
+        self.stream_scale, self.stream_updated = 1.0, -math.inf
         self.cam = None                 # pose.cam (protocol 3), kept for diagnostics
         self.desired = {}               # key -> Tile (active anchor)
         self.refined = set()            # nodes refined by the last selection (hysteresis)
@@ -2864,7 +2867,8 @@ class Connection:
             m = {"type": "hello", "protocol": PROTOCOL, "format": lay.format, "serverVersion": SERVER_VERSION,
                  "appVersion": updatesmod.local_version() or "",     # the release (VERSION): the players' reports
                  "sessionId": self.s.sid, "farFormat": self.s.far_format, "material": farfield.MATERIAL,
-                 "nearVisual": self.s.near_visual, "attribution": self.s.attribution()}
+                 "nearVisual": self.s.near_visual, "attribution": self.s.attribution(),
+                 "streaming": {"small": budget.small()}}
             if self.s.imagery is not None:      # the world map credits the sources its view shows
                 m["imageryCredits"] = self.s.imagery.credits_by_area()
                 m["otherCredits"] = self.s.attribution_rest()
@@ -3296,6 +3300,8 @@ class Connection:
         if aid == self.active:
             self.focus = (x, y)
             self.pz = _num(msg, "z", 0.0)
+            self.stream_scale = streaming.feedback(msg.get("streaming"))
+            self.stream_updated = time.monotonic()
         elif aid in self.s.anchors and self.active in self.s.anchors:
             # A late pose of the previous anchor: move it into the active frame.
             src, dst = self.s.anchors[aid].frame, self.s.anchors[self.active].frame
@@ -3691,16 +3697,20 @@ class Connection:
 
         cone = (farfield.view_cone(self.cam)
                 if isinstance(self.cam, dict) and getattr(self, "cam_aid", None) == aid else None)
-        dist = farfield.view_distances(todo, cone, fx, fy)
+        # Legacy clients have no camera: preserve their established nearest-first ordering.
+        priorities = (streaming.priorities(todo, self.focus, self.vel, (fx, fy), cone) if cone is not None
+                      else np.asarray([(1, t.distance(fx, fy)) for t in todo]))
 
         def prio(k):
             t = todo[k]
-            cls = 2
-            if t.level in (0, self.s.forced_level) and any(farfield.overlaps(t.bbox, b) for b in gate):
-                cls = 0
-            elif t.key in started:
-                cls = 1
-            return (cls, dist[k], t.level, t.key)
+            cls = priorities[k, 0]
+            gated = t.level in (0, self.s.forced_level) and any(farfield.overlaps(t.bbox, b) for b in gate)
+            if cone is None:
+                # Legacy gating outranks partially completed groups, including their distance order.
+                return (0 if gated else 1 if t.key in started else 2, priorities[k, 1], t.level, t.key)
+            if gated:
+                cls = -1
+            return (cls, 0 if t.key in started else 1, priorities[k, 1], t.level, t.key)
         self.queue = [todo[k] for k in sorted(range(len(todo)), key=prio)]
         self.qi = 0
         self.failed.clear()
@@ -3824,6 +3834,9 @@ class Connection:
             # plus the helpers' slots (compute sharing): their tiles cost this process only the files (26 ms a
             # tile); kept to the local workers, a Steam Deck sent 2 at a time to 12 idle helper workers (2026-10-22)
             workers += self.s.remote_slots()
+            # Feedback only controls visual generation. Physics blocks and road workers retain
+            # their separate lanes. Old clients and expired feedback keep the hardware default.
+            workers = streaming.worker_limit(workers, self.stream_scale, self.stream_updated, time.monotonic())
             while anchor is not None and not self.teleport_pending and len(self.inflight) < workers:
                 t = self._next_tile()
                 if t is None:
@@ -4374,6 +4387,7 @@ def main():
     except fast.NativeMissing as ex:
         log.error("%s", ex)
         raise SystemExit(str(ex))
+    log.info("native DEM sampling: %s (runtime CPU dispatch)", getattr(fast._ef, "SIMD_BACKEND", "scalar"))
     import sampler
     sampler.maybe_start()           # BNGE_SAMPLE=<path>: a sampling profile of this process's threads (debugging)
     import budget

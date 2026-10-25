@@ -41,6 +41,7 @@ local rebase = require('beamngEarth/rebase')
 local follow = require('beamngEarth/follow')
 local lattice = require('beamngEarth/lattice')
 local governor = require('beamngEarth/governor')
+local streaming = require('beamngEarth/streaming')
 local camshift = require('beamngEarth/camshift')
 local stopwatch = require('beamngEarth/stopwatch')
 local horizon = require('beamngEarth/horizon')
@@ -660,6 +661,7 @@ local function onMessage(msg)
     setStatus('Disconnected from companion server: ' .. tostring(msg.error))
   elseif t == 'hello' then
     pcall(mpsession.onServerHello)
+    farfield.configureReserve(msg.streaming)
     st.sessionId = msg.sessionId
     st.refreshLater = nil       -- (a restarted server numbers its anchors from 1 again)
     roads.setSession(msg.sessionId)   -- the road / building tiles' pooled shape files belong to this server
@@ -1105,6 +1107,8 @@ local function updateWorld(dt)
       sessions = farfield.heldSessions(),
       slotsGone = slotsGoneNow(), -- pooled shape slots let go (server/matslots.py)
       foci = poseFoci(),          -- other vehicles' collision islands (collisionfoci.lua; earthd parse_foci)
+      streaming = { scale = gov.loading and 1 or gov.scale, frameMs = gov.smoothMs,
+        queued = farfield.queuedCount(), loading = gov.loading },
       cam = c and { x = c.x, y = c.y, z = c.z, fx = c.fx, fy = c.fy, fz = c.fz, fovDeg = c.fovDeg, h = c.h } or nil })
   end
 
@@ -1682,6 +1686,8 @@ local function onUpdate(dtReal, dtSim)
   end
   -- the governor's frame opens first: its clock is the wall time since the last onUpdate (hptimer)
   gov:setLoading(st.placeFrames ~= nil or st.clock < st.loadingUntil or st.slowFor > SLOW_S)
+  gov:setFrameContext(streaming.frameTarget(rawget(_G, 'settings')),
+    not (Engine and Engine.isProgramFocused) or Engine.isProgramFocused())
   gov:beginFrame(farfield.hasWork() or roads.hasWork())
   gov:chargeEngine(engineTickMs())     -- what the engine spent on last frame's new tiles (governor.lua)
   for _, msg in ipairs(net.update(dtReal)) do

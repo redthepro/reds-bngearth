@@ -2,6 +2,7 @@
 name = "earthfast"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.89"     # stable AVX-512 intrinsics; portable binaries use runtime dispatch
 description = "BeamNG.Earth's world server: geometry kernels in Rust (the hot Python loops; server/fast.py falls back to Python)"
 license = "MIT"
 
