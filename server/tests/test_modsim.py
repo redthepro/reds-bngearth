@@ -12,7 +12,8 @@
     heldSessions / heldAnchors);
   - edgeguard.lua step (lua/edgeguard_trace.lua) against modsim.EdgeGuard on random poses, speeds,
     heights and blocks (docs/ROADMAP.md "Robustness" 2).
-Both must produce the same trace as the ports, frame by frame. Skipped without luajit."""
+Both must produce the same trace as the ports, frame by frame. Uses standalone LuaJIT or
+Lupa's LuaJIT runtime in a separate process (including on Windows)."""
 import math
 import os
 import shutil
@@ -27,6 +28,11 @@ import modsim  # noqa: E402
 import farfield as ff  # noqa: E402
 
 LUAJIT = shutil.which("luajit")
+try:
+    import lupa.luajit21  # noqa: F401
+    HAVE_LUPA = True
+except ImportError:
+    HAVE_LUPA = False
 HERE = Path(__file__).resolve().parent
 TRACE = HERE / "lua" / "modsim_trace.lua"
 FAR_TRACE = HERE / "lua" / "farfield_trace.lua"
@@ -34,6 +40,16 @@ EDGE_TRACE = HERE / "lua" / "edgeguard_trace.lua"
 MOD_TESTS = modsim.MOD_ROOT.parent / "tests"
 FRAMES, SEED = 3000, 12345
 IMPORT_MS, DELETE_MS, BASE_MS = 1.75, 0.25, 11.5      # as in lua/farfield_trace.lua (exact in binary)
+
+
+def run_lua(script, *args, timeout=60):
+    """Keep each trace isolated, with identical LuaJIT argument and stdout semantics."""
+    command = [LUAJIT] if LUAJIT else [sys.executable, "-c", (
+        "import sys; from lupa.luajit21 import LuaRuntime; lua = LuaRuntime(); "
+        "lua.globals().arg = lua.table_from(dict(enumerate(sys.argv[1:]))); "
+        "lua.execute('dofile(arg[0])')")]
+    return subprocess.run(command + [str(script), *(str(a) for a in args)],
+                          capture_output=True, text=True, timeout=timeout)
 
 
 class Rng:
@@ -334,11 +350,10 @@ def python_far_trace(lines, final=None):
     return out
 
 
-@unittest.skipIf(LUAJIT is None, "luajit not installed")
+@unittest.skipUnless(LUAJIT or HAVE_LUPA, "install luajit or lupa for Lua parity tests")
 class ModSimTest(unittest.TestCase):
     def test_ports_match_lua(self):
-        res = subprocess.run([LUAJIT, str(TRACE), str(modsim.MOD_DIR.parent), str(FRAMES), str(SEED)],
-                             capture_output=True, text=True, timeout=60)
+        res = run_lua(TRACE, modsim.MOD_DIR.parent, FRAMES, SEED)
         self.assertEqual(res.returncode, 0, res.stderr)
         lua = [ln.split() for ln in res.stdout.splitlines()]
         py = python_trace(FRAMES, SEED)
@@ -369,8 +384,7 @@ class ModSimTest(unittest.TestCase):
         self.assertNotEqual([b[3:9] for b in m512], [b[3:9] for b in py if b[0] == "M" and b[1] == 1024])
 
     def test_edgeguard_port_matches_lua(self):
-        res = subprocess.run([LUAJIT, str(EDGE_TRACE), str(modsim.MOD_DIR.parent), "4000", str(SEED)],
-                             capture_output=True, text=True, timeout=60)
+        res = run_lua(EDGE_TRACE, modsim.MOD_DIR.parent, 4000, SEED)
         self.assertEqual(res.returncode, 0, res.stderr)
         lua = res.stdout.splitlines()
         py = python_edge_trace(4000, SEED)
@@ -391,8 +405,7 @@ class ModSimTest(unittest.TestCase):
             path = os.path.join(tmp, "far.script")
             with open(path, "w") as f:
                 f.write("\n".join(lines) + "\n")
-            res = subprocess.run([LUAJIT, str(FAR_TRACE), str(modsim.MOD_DIR.parent), str(MOD_TESTS), path],
-                                 capture_output=True, text=True, timeout=120)
+            res = run_lua(FAR_TRACE, modsim.MOD_DIR.parent, MOD_TESTS, path, timeout=120)
         self.assertEqual(res.returncode, 0, res.stderr)
         lua = res.stdout.splitlines()
         final = {}

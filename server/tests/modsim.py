@@ -14,7 +14,8 @@ ports of:
                 the previous anchor's leftovers at far_done, cover state (edge ring sunk by the
                 server's `sink`, interior hidden; nothing covered in mesh near-visual mode),
                 onBlockCommit, uncoverReady, deletes (never in a frame that imported); mesh mode:
-                nearest-first imports, previous-anchor tiles dropped once covered; server sessions
+                driving corridor, camera view, then warm-reserve imports; previous-anchor tiles
+                dropped once covered; server sessions
                 (switchAnchor's session: old tiles keyed by session and anchor, heldAnchors of the
                 current session only, heldSessions from the shapes and material textures).
   edgeguard.lua step (EdgeGuard): the pause at the block's edge while the server cannot move
@@ -117,6 +118,7 @@ GOV = lua_consts("governor.lua")
 XO = lua_consts("crossover.lua")
 FAR = lua_consts("farfield.lua")
 EDGE = lua_consts("edgeguard.lua")
+STREAM = lua_consts("streaming.lua")
 
 
 # --- follow.lua / rebase.lua / core.lua rebaseHint ----------------------------------------
@@ -304,6 +306,38 @@ def ground_box(cx, cy, size=1024):
     L = lattice_table(size)
     x0, y0 = cx - L["HALF"], cy - L["HALF"]
     return x0, y0, x0 + L["VALID_W"], y0 + L["VALID_W"]
+
+
+# --- streaming.lua ---------------------------------------------------------------------
+def stream_classifier(cam, player=None):
+    """Precompute the driving corridor and camera cone once per import queue scan."""
+    corridor = None
+    if player is not None:
+        x, y = player["x"], player["y"]
+        ex, ey = x + player.get("vx", 0) * STREAM["DRIVE_LEAD"], y + player.get("vy", 0) * STREAM["DRIVE_LEAD"]
+        r = STREAM["DRIVE_RADIUS"]
+        corridor = min(x, ex) - r, min(y, ey) - r, max(x, ex) + r, max(y, ey) + r
+    fx, fy = (cam.get("fx", 0), cam.get("fy", 0)) if cam is not None else (0, 0)
+    n = math.sqrt(fx * fx + fy * fy)
+    cosmax = None
+    if cam is not None and n > 0.2:
+        fx, fy = fx / n, fy / n
+        half = min(80, math.degrees(math.atan(math.tan(math.radians(cam.get("fovDeg", 60)) / 2) * 16 / 9)) + 15)
+        cosmax = math.cos(math.radians(half))
+
+    def classify(inst):
+        if corridor is not None:
+            lx, ly, hx, hy = corridor
+            if inst.x0 <= hx and inst.x1 >= lx and inst.y0 <= hy and inst.y1 >= ly:
+                return 0
+        if cosmax is None:
+            return 1
+        cx, cy = (inst.x0 + inst.x1) / 2 - cam["x"], (inst.y0 + inst.y1) / 2 - cam["y"]
+        d = math.sqrt(cx * cx + cy * cy)
+        if d <= inst.x1 - inst.x0 or (cx * fx + cy * fy) / d >= cosmax:
+            return 1
+        return 2
+    return classify
 
 
 # --- governor.lua ----------------------------------------------------------------------
@@ -1114,9 +1148,9 @@ class FarField:
                 self.apply_cover(inst, False)
 
     # --- per frame ---
-    def _peek(self, cam=None):
-        """farfield.lua peekImport: group tiles in server order, then prefetch; mesh mode with a
-        camera: the queued group tile nearest the camera (first of equals in queue order)."""
+    def _peek(self, cam=None, player=None):
+        """farfield.lua peekImport: driving corridor, view, reserve in mesh mode; otherwise
+        server order. Distance breaks class ties, then arrival order; prefetch comes last."""
         q = self.main_q
         while q:
             inst = q[0]
@@ -1124,31 +1158,20 @@ class FarField:
                 break
             q.popleft()
         if q:
-            if self.near_visual != "mesh" or cam is None:
+            if self.near_visual != "mesh" or (cam is None and player is None):
                 return q[0]
-            # outside the camera's view cone a tile counts VIEW_PENALTY times as far (squared)
-            fx, fy = cam.get("fx") or 0.0, cam.get("fy") or 0.0
-            fn = math.sqrt(fx * fx + fy * fy)
-            cosmax = None
-            if fn > 0.2:
-                fx, fy = fx / fn, fy / fn
-                half = math.degrees(math.atan(math.tan(math.radians(cam.get("fovDeg") or 60) / 2) * 16 / 9)) \
-                    + FAR["VIEW_MARGIN_DEG"]
-                cosmax = math.cos(math.radians(min(half, FAR["VIEW_MAX_DEG"])))
-            pen2 = FAR["VIEW_PENALTY"] * FAR["VIEW_PENALTY"]
-            best, bd = None, math.inf
+            focus = cam if cam is not None else player
+            classify = stream_classifier(cam, player)
+            best, bd, bc = None, math.inf, math.inf
             for inst in q:
                 if self.pending.get(inst.key) is inst and inst.queued:
-                    dx = max(inst.x0 - cam["x"], 0.0, cam["x"] - inst.x1)
-                    dy = max(inst.y0 - cam["y"], 0.0, cam["y"] - inst.y1)
+                    cls = classify(inst)
+                    origin = player if cls == 0 and player is not None else focus
+                    dx = max(inst.x0 - origin["x"], 0.0, origin["x"] - inst.x1)
+                    dy = max(inst.y0 - origin["y"], 0.0, origin["y"] - inst.y1)
                     d = dx * dx + dy * dy
-                    if cosmax is not None and d > 0:
-                        cx, cy = (inst.x0 + inst.x1) / 2 - cam["x"], (inst.y0 + inst.y1) / 2 - cam["y"]
-                        r = math.sqrt(cx * cx + cy * cy)
-                        if r > inst.x1 - inst.x0 and (cx * fx + cy * fy) / r < cosmax:
-                            d = d * pen2
-                    if d < bd:
-                        best, bd = inst, d
+                    if cls < bc or (cls == bc and d < bd):
+                        best, bd, bc = inst, d, cls
             return best
         q = self.pre_q
         while q:
