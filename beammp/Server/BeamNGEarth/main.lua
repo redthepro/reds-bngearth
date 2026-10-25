@@ -94,6 +94,7 @@ function G.onPose(pid, d, name)
   local sp = tonumber(d.sp)
   p.sp = (sp and sp >= 1 and sp <= 65535 and sp % 1 == 0) and sp or nil
   p.sc = type(d.sc) == 'string' and #d.sc <= 64 and d.sc or nil
+  p.st = type(d.st) == 'string' and #d.st == 64 and d.st:match('^[0-9a-f]+$') and d.st or nil
   local sw = tonumber(d.sw)
   p.sw = (sw and sw >= 0.1 and sw <= 1000) and sw or 1
   if first and d.joined == true then
@@ -110,15 +111,15 @@ function G.onLeave(pid) G.players[pid] = nil; G.sentPeers[pid] = nil end
 function G.peers(players)
   local byKey = {}
   for pid, p in pairs(players) do
-    if p.sp and p.sc and p.ip then
+    if p.sp and p.sc and p.ip and p.st then
       local k = G.key(p.aLat, p.aLon)
       byKey[k] = byKey[k] or {}
-      table.insert(byKey[k], { id = tostring(pid), host = p.ip, port = p.sp, code = p.sc, weight = p.sw })
+      table.insert(byKey[k], { id = tostring(pid), host = p.ip, port = p.sp, code = p.sc, weight = p.sw, token = p.st })
     end
   end
   local out = {}
   for pid, p in pairs(players) do
-    local list = p.sp and p.sc and p.ip and byKey[G.key(p.aLat, p.aLon)]
+    local list = p.sp and p.sc and p.ip and p.st and byKey[G.key(p.aLat, p.aLon)]
     if list then
       table.sort(list, function(a, b) return a.id < b.id end)
       out[pid] = { me = tostring(pid), members = list }
@@ -131,7 +132,7 @@ end
 function G.peersKey(g)
   local parts = {}
   for _, m in ipairs(g.members) do
-    parts[#parts + 1] = m.id .. '@' .. m.host .. ':' .. m.port .. '/' .. m.code .. 'x' .. tostring(m.weight)
+    parts[#parts + 1] = m.id .. '@' .. m.host .. ':' .. m.port .. '/' .. m.code .. 'x' .. tostring(m.weight) .. '/' .. m.token
   end
   return table.concat(parts, ',')
 end
@@ -184,7 +185,14 @@ if MP and MP.RegisterEvent then
 
   function BNGE_tick()
     MP.TriggerClientEvent(-1, 'bngeAnchors', encode(G.tick(G.TICK_MS / 1000)))
-    for pid, g in pairs(G.peers(G.live())) do
+    local groups = G.peers(G.live())
+    for pid in pairs(G.sentPeers) do
+      if not groups[pid] then
+        MP.TriggerClientEvent(pid, 'bngePeers', encode({ me = tostring(pid), members = {} }))
+        G.sentPeers[pid] = nil
+      end
+    end
+    for pid, g in pairs(groups) do
       local sig = G.peersKey(g)
       if G.sentPeers[pid] ~= sig then
         G.sentPeers[pid] = sig

@@ -118,7 +118,8 @@ MOD_TO_SERVER = {
     "perf_log": {"lines": F((list, dict))},
     # BeamMP shared generation (peerwork.py, mpsession.lua): our world server serves our group; the players on our
     # anchor ({id, host, port, code, weight} each)
-    "share": {},
+    "share": {"port": F(int, OPT)},
+    "share_stop": {},
     "peers": {"me": F(str), "members": F(list)},
     # roads (roads.py; additive): the mod removed its roads (switched off and on again): send them again
     "roads_reset": {},
@@ -176,7 +177,7 @@ SERVER_TO_MOD = {
                      "provisional": F(bool, OPT),          # 2026-10-22: a teleport's ungraded first block
                      "px": F(NUM, NULL, OPT), "py": F(NUM, NULL, OPT)},    # the prepare_anchor's spot, echoed
     "anchor_error": {"requestId": F(int, NULL), "error": F(str)},
-    "share": {"port": F(int, NULL), "code": F(str), "weight": F(NUM, OPT)},   # our group service (mpsession.onShare)
+    "share": {"port": F(int, NULL), "code": F(str), "weight": F(NUM, OPT), "token": F(str, OPT)},   # our group service (mpsession.onShare)
     "terrain_ready": {"requestId": F(int), "anchorId": F(int), **TERRAIN},
     "terrain_refresh": {"anchorId": F(int), **TERRAIN},     # the graded block in place of the provisional one
     "terrain_error": {"requestId": F(int, NULL), "anchorId": F(int, NULL), "error": F(str)},
@@ -304,6 +305,15 @@ def mod_sends():
             keys, nested = top_keys(t)
             kind = re.search(r"type\s*=\s*'(\w+)'", t).group(1)
             out.setdefault(kind, []).append((keys - {"type"}, nested))
+    # shareRequest constructs its table before passing it to net.send.
+    text = (LUA / "mpsession.lua").read_text(encoding="utf-8")
+    body = lua_function(text, "shareRequest")
+    match = re.search(r"return\s+(\{)", body)
+    if match:
+        table = lua_tables(body, match.start(1))
+        keys, nested = top_keys(table)
+        kind = re.search(r"type\s*=\s*'(\w+)'", table).group(1)
+        out.setdefault(kind, []).append((keys - {"type"}, nested))
     return out
 
 
@@ -318,7 +328,8 @@ def mod_reads():
 
 
 def server_reads():
-    text = (Path(earthd.__file__)).read_text(encoding="utf-8")
+    text = "\n".join((Path(earthd.__file__).parent / name).read_text(encoding="utf-8")
+                     for name in ("earthd.py", "sharing.py"))
     out = set(re.findall(r"msg\.get\(\"(\w+)\"", text)) | set(re.findall(r"msg\[\"(\w+)\"\]", text))
     out |= set(re.findall(r"_num\(msg, \"(\w+)\"", text))
     return out

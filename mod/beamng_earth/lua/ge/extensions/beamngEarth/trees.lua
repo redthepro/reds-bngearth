@@ -6,6 +6,7 @@
 -- (ROADMAP "deterministic generation": a level shows the same trees, thinned), made and removed a few
 -- hundred per frame (~19 us each, 2026-10-13 probe).
 local M = {}
+local streetlights = require('beamngEarth/streetlights')
 
 M.PER_FRAME = 250       -- items made or removed per frame at most
 M.ROWS_PER_FRAME = 12000 -- rows of changing tiles looked at per frame at most (Lua time: 30000 averaged 2.5 ms)
@@ -328,7 +329,8 @@ local function makeItem(fd, row, shape, sc, solid)
   return it
 end
 
-local function removeItem(fd, it, shape)
+local function removeItem(fd, it, shape, lightKey)
+  if lightKey then streetlights.remove(lightKey) end
   pcall(function() fd:removeItem(it) end)
   M.removed = M.removed + 1
   if shape then pop[shape] = math.max((pop[shape] or 1) - 1, 0) end
@@ -437,6 +439,7 @@ M.GHOST_FAR_M = 1536
 M.GHOST_FAR_WAIT_S = 2
 
 function M.transform(xf, geodesy)
+  streetlights.transform(xf)
   local bx, by, bz, bw = xf:beamngQuat()
   local any = false
   for _, t in pairs(tiles) do
@@ -503,6 +506,7 @@ local frameN = 0
 -- view: the camera's {x, y} when it is away from the car (core: VIEW_AWAY_M), else nil: what is shown follows what the
 -- player looks at, the colliding items stay round the car (the user, 2026-10-20: "the LODs still all follow the car").
 function M.update(anchorId, player, view)
+  streetlights.update(player, view)
   if not next(tiles) then return end
   if not setup() then return end
   frameN = frameN + 1
@@ -520,7 +524,7 @@ function M.update(anchorId, player, view)
         if budget <= 0 then return end
         local sh = t.madeShape[i]
         if not sh or allow(sh) then
-          if fd then removeItem(fd, it, sh) end
+          if fd then removeItem(fd, it, sh, key .. ':' .. i) else streetlights.remove(key .. ':' .. i) end
           t.made[i], t.solid[i], t.madeShape[i] = nil, nil, nil
           budget = budget - 1
         else left = true end
@@ -589,8 +593,9 @@ function M.update(anchorId, player, view)
           local sh, sc = shapeOf(t, i, row)
           if budget <= 0 then t.pending = true; finish(); return end
           if allow(sh) then
-            if t.made[i] then removeItem(data(), t.made[i], t.madeShape[i]); budget = budget - 1 end  -- solid <-> not
+            if t.made[i] then removeItem(data(), t.made[i], t.madeShape[i], o[1] .. ':' .. i); budget = budget - 1 end  -- solid <-> not
             t.made[i] = makeItem(data(), row, sh, sc, solid)
+            if t.made[i] then streetlights.add(o[1] .. ':' .. i, row, g, sc) end
             t.solid[i] = (t.made[i] and solid) or nil      -- true or nil
             t.madeShape[i] = t.made[i] and sh or nil
             if solid then nearMade = true end
@@ -599,7 +604,7 @@ function M.update(anchorId, player, view)
         elseif r >= want and t.made[i] then
           if budget <= 0 then t.pending = true; finish(); return end
           if allow(t.madeShape[i] or '') then
-            removeItem(data(), t.made[i], t.madeShape[i])
+            removeItem(data(), t.made[i], t.madeShape[i], o[1] .. ':' .. i)
             t.made[i], t.solid[i], t.madeShape[i] = nil, nil, nil
             budget = budget - 1
           else t.pending = true end
@@ -615,6 +620,7 @@ end
 
 -- Disconnect, a new server session, mod unload: every item removed.
 function M.clear()
+  streetlights.clear()
   for _, t in pairs(tiles) do
     local f = t.forestId and scenetree.findObjectById(t.forestId)
     local fd = f and f:getData()
@@ -626,6 +632,7 @@ end
 
 -- Level end: the level deletes its objects itself.
 function M.reset()
+  streetlights.clear()
   tiles, types, ready, pool, forestCount, pop = {}, {}, false, {}, 0, {}
 end
 

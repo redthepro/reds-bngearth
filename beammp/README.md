@@ -3,6 +3,12 @@
 This zip turns a BeamMP server into a BeamNG.Earth server: the real world, streamed around every player. Players join
 with the normal BeamMP launcher.
 
+Install the matching app, mod and server plugin from this fork. Compute sharing now authenticates the active
+anchor group using random session credentials relayed by the plugin. Old plugins/clients fall back to local
+generation. Credentials are not logged or included in the public position updates; only group members receive
+them. Leaving multiplayer revokes the credentials and closes the player's sharing listener. The server and
+members of the group must be trusted; peer traffic is authenticated, not encrypted.
+
 ## Quick server setup
 
 1. **Get the BeamMP server** (the latest release from https://github.com/BeamMP/BeamMP-Server/releases; Windows:
@@ -34,7 +40,7 @@ data and little CPU: the world is built on each player's computer.
 
 ## Players
 
-- **Every player needs the BeamNG.Earth app** (https://github.com/TecnaGamer/BeamNG.Earth/releases) running, the same
+- **Every player needs the BeamNG.Earth app** (https://github.com/redthepro/bngearth/releases) running, the same
   version as the server's. Start the BeamNG.Earth app and the BeamMP launcher in either order (the app starts the game,
   or just its world server if the game is already running), then join. Without the app, a window asks to install it:
   the world can't load without it.

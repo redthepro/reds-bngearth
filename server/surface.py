@@ -215,6 +215,7 @@ def warp(lat, lon):
 ROAD_MATERIAL = {"dirt": DIRT, "gravel": LOOSE, "cobble": COBBLE, "paved": ASPHALT,
                  "rock": ROCK, "grass": GRASS}     # rock and grass roads: the ground's own materials (roads.terrain_surface)
 ROAD_ORDER = ("dirt", "gravel", "rock", "grass", "cobble", "paved")
+ROAD_BLEND_GUARD_M = 1.0  # keep the coarse terrain-layer transition outside built pavement
 
 
 def grid_affine(lat, lon):
@@ -282,6 +283,11 @@ def paint_roads(idx, lat, lon, feats_list, square, urban_fn=None, widths=None, e
             width += 2 * (spec.walk + square)   # the sidewalks (+ a sample: tufts at the outer edge): grass grew up
                                                 # through them (ground cover is the terrain's: Lauterbrunnen, Baltimore
                                                 # 2026-10-15)
+        elif kind in ("paved", "cobble"):
+            # Terrain materials interpolate between 2 m samples. Painting only the nominal width
+            # blends the grass/dirt sample into the driving surface; give that blend a narrow verge.
+            # The photo, markings and mapped carriageway width still define the pavement edge.
+            width += 2 * min(ROAD_BLEND_GUARD_M, square / 2)
         # rounded up to an odd number of samples: a 9 m road was painted 8 m wide (round(4.5) = 4), and an even width
         # sits half a sample off the line (PIL), its one edge a metre short
         px = max(1, int(math.ceil(width / square - 1e-9)))
@@ -351,7 +357,7 @@ def paint_roads(idx, lat, lon, feats_list, square, urban_fn=None, widths=None, e
 # colour and opacity by surface, blended in this order (paved last: it wins at junctions); a trace of the photo is kept
 # (stains, patches), and most of it on unpaved tracks, which the photo shows well and a flat colour drew as stripes
 PHOTO_ROAD_RGBA = {"dirt": (122, 104, 82, 0.45), "gravel": (128, 118, 102, 0.6), "cobble": (112, 104, 96, 0.85),
-                   "paved": (95, 95, 94, 0.92)}
+                   "paved": (95, 95, 94, 0.98)}
 PHOTO_ROADS_MAX_TEXEL = 2.0     # m per texel: coarser far tiles keep the photo's own roads (far, under a pixel wide)
 
 

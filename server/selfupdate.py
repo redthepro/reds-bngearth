@@ -52,7 +52,7 @@ def asset_suffix(path):
 def pick(release, suffix):
     """(version, name, url, size, sha256) of the release's asset for suffix, or None. Only this project's assets with
     a SHA-256 digest count."""
-    if not isinstance(release, dict) or not suffix:
+    if not updates.REPO or not isinstance(release, dict) or not suffix:
         return None
     version = str(release.get("tag_name") or "").lstrip("v")
     if updates.parse(version) is None:
@@ -89,6 +89,8 @@ def download(net, current, path=None, progress=None):
     """Download the latest release's file for the packaged app at path (default: this one) beside it and stage it.
     Returns (version, the new file's path). progress(done bytes, total bytes) is called as it goes. Raises
     UpdateError (no newer release, a source copy, no matching asset, a bad download)."""
+    if not updates.REPO:
+        raise UpdateError("updates are disabled for this build")
     path = path or packaged_path()
     if not path:
         raise UpdateError("this copy runs from source: update it with git pull")
@@ -141,7 +143,7 @@ def download(net, current, path=None, progress=None):
         os.chmod(dest, 0o755)
     tmp = os.path.join(folder, STAGED + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"version": version, "path": name, "sha256": digest}, f)
+        json.dump({"version": version, "path": name, "sha256": digest, "repo": updates.REPO}, f)
     os.replace(tmp, os.path.join(folder, STAGED))
     return version, dest
 
@@ -150,6 +152,8 @@ def staged(current, path=None):
     """The downloaded newer copy to start instead of this one (its path), or None. Checked again by its digest; the
     note is removed when that file is gone or changed (kept when it is not newer: the new copy itself reads it, and the
     old one, started again from the player's shortcut, still hands over)."""
+    if not updates.REPO:
+        return None
     path = path or packaged_path()
     if not path:
         return None
@@ -159,6 +163,8 @@ def staged(current, path=None):
         with open(note, encoding="utf-8") as f:
             d = json.load(f)
         version, name, digest = str(d["version"]), str(d["path"]), str(d["sha256"])
+        if d.get("repo") != updates.REPO:
+            return None
     except (OSError, ValueError, KeyError, TypeError):
         return None
     new = os.path.join(folder, os.path.basename(name))

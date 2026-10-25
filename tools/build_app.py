@@ -143,6 +143,14 @@ def pyinstaller(work, ico, onefile, ver=None, boot=None):
            "--add-data", f"{os.path.join(server, 'bridges_wd.npz')}{SEP}."]     # (bridgetypes.WD_PATH)
     # the sources' fingerprint (peerwork.code_id: compute-sharing helpers build only for the same code)
     sys.path.insert(0, server)
+    import updates
+    # CI embeds its own repository; local builds use UPDATE_REPO or an explicit override.
+    update_env = dict(os.environ)
+    if "BNGE_UPDATE_REPO" not in update_env and update_env.get("GITHUB_REPOSITORY"):
+        update_env["BNGE_UPDATE_REPO"] = update_env["GITHUB_REPOSITORY"]
+    with open(os.path.join(work, "UPDATE_REPO"), "w", encoding="utf-8") as f:
+        f.write(updates.repository(ROOT, update_env) + "\n")
+    cmd += ["--add-data", f"{os.path.join(work, 'UPDATE_REPO')}{SEP}."]
     import peerwork
     with open(os.path.join(work, "CODE_ID"), "w", encoding="ascii") as f:
         f.write(peerwork.source_id(server))

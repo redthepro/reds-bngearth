@@ -5,6 +5,7 @@ the block's footprint) next to its heightmap; terrain messages name it (base, ba
 import os
 import sys
 import time
+import threading
 import unittest
 
 import struct
@@ -194,8 +195,8 @@ class DetailQuickPhotoTest(ServerHarness):
         self.assertTrue(asked)
 
 
-class DetailFastPhotoLaterTest(ServerHarness):
-    """A fast player (earthd FAST_BASE_V): a block whose photo is slow goes without it, the photo follows (block_base)
+class DetailPhotoLaterTest(ServerHarness):
+    """At normal driving speeds a block whose photo is slow goes without it, the photo follows (block_base)
     and later answers for the block carry it."""
     near_visual = "detail"
     with_imagery = True
@@ -207,17 +208,19 @@ class DetailFastPhotoLaterTest(ServerHarness):
         aid = self.prepare_anchor(1, LAT, LON)["anchorId"]
         s = self.server
         orig = s.write_base
+        gate = threading.Event()
+        self.addCleanup(gate.set)
 
         def slow(*a, **kw):
-            time.sleep(1.0)
+            gate.wait(30)
             return orig(*a, **kw)
         s.write_base = slow
-        s.fast = True
-        t0 = time.monotonic()
-        self.c.send({"type": "prepare_terrain", "requestId": 3, "anchorId": aid, "cx": 512.0, "cy": 0.0})
-        tr, _ = self.c.until(lambda m: m["type"] == "terrain_ready", timeout=60)
-        self.assertNotIn("base", tr, "sent without its photo")
-        self.assertLess(time.monotonic() - t0, 0.95, "not held for the photo")
+        try:
+            self.c.send({"type": "prepare_terrain", "requestId": 3, "anchorId": aid, "cx": 512.0, "cy": 0.0})
+            tr, _ = self.c.until(lambda m: m["type"] == "terrain_ready", timeout=10)
+            self.assertNotIn("base", tr, "sent while its photo is still blocked")
+        finally:
+            gate.set()
         m, _ = self.c.until(lambda m: m["type"] == "block_base", timeout=30)
         self.assertEqual((m["anchorId"], m["cx"], m["cy"]), (aid, 512.0, 0.0))
         self.assertTrue(os.path.exists(self.fs(m["base"])))

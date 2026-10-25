@@ -876,8 +876,8 @@ class Deshadow:
 
     @contextlib.contextmanager
     def no_wait(self):
-        """Renders on this thread take a region that is not ready as pending at once (the block's base
-        photo: a block answer must not wait for an analysis; earthd renders it again once it is done)."""
+        """Renders on this thread take an unfinished region as pending at once. Terrain photos and far
+        tiles use this so analysis cannot block loading; earthd refreshes them when the result is ready."""
         old = getattr(self._tl, "nowait", False)
         self._tl.nowait = True
         try:

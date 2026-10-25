@@ -42,7 +42,9 @@ def _resample(pts, step):
     if s[-1] <= 1e-6:
         return pts[:1, :2], s[:1], pts[:1, 2]
     n = max(1, int(np.ceil(s[-1] / step)))
-    t = np.linspace(0.0, s[-1], n + 1)
+    # Keep source vertices as well: sampling only on a uniform grid cuts across short curved
+    # joins and puts visible kinks back into the lane paint prepared by roads.extras.
+    t = np.unique(np.r_[np.linspace(0.0, s[-1], n + 1), s])
     return (np.stack([np.interp(t, s, pts[:, 0]), np.interp(t, s, pts[:, 1])], axis=1), t,
             np.interp(t, s, pts[:, 2]))
 

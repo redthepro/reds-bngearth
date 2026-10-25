@@ -18,7 +18,20 @@ local files = {}
 readFile = function(p) return files[p] end
 jsonDecode = function(s) return assert(load('return ' .. s))() end   -- the test writes Lua table text
 
+-- Advance a synthetic frame clock: Windows os.clock can return the same value
+-- for several calls, which made zero-delay collision assertions nondeterministic.
+local clock = 0
+local watch = require('beamngEarth/stopwatch')
+watch.new = function()
+  local start = clock
+  return function() return clock - start end
+end
 local roads = require('beamngEarth/roads')
+local update = roads.update
+roads.update = function(...)
+  clock = clock + 16
+  return update(...)
+end
 
 local gov = { tries = 0 }
 function gov:try() self.tries = self.tries + 1; return self.allow == nil or self.tries <= self.allow end

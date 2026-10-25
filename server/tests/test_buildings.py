@@ -90,7 +90,7 @@ class RegionStyleTest(unittest.TestCase):
             n = 0
             for i in range(200):
                 ring = np.array([[0, 0], [6, 0], [6, 15], [0, 15]], float) + rng.uniform(-900, 900, 2)
-                n += bld.plan(ring, {"class": "terrace"}, neighbours=2, lat=lat, lon=lon).roof != "flat"
+                n += bld.plan(ring, {"class": "terrace"}, neighbours=2, lat=lat, lon=lon, dense=True).roof != "flat"
             return n
         self.assertEqual(gabled(39.28, -76.59), 0)
         self.assertGreater(gabled(52.37, 4.89), 100)

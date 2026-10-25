@@ -192,6 +192,14 @@ end
 -- then it takes the new file too and reloads. A later revision of the same tile's texture (the
 -- server re-rendered it, --colormatch / --deshadow) is what every instance of the tile should show:
 -- an in-use material switches to it through the retex queue (time-sliced, see requestRetex).
+function M.needsRebind(name, texture)
+  local e = mats[name]
+  if not e or not texture or not e.texture or texture == e.texture then return false end
+  -- In-use newer revisions are queued by ref, not loaded inline. An unused pooled material,
+  -- however, flushes/reloads synchronously when its slot is assigned to another tile.
+  return e.refs == 0 or not FS:fileExists(e.texture)
+end
+
 function M.ref(name, texture)
   local e = mats[name]
   if not e then return false end

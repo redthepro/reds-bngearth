@@ -156,6 +156,21 @@ class SchedulerTest(unittest.TestCase):
         self.assertGreaterEqual(time.monotonic() - t0, 1.1)
         self.assertEqual(self.peak[0], 1)
 
+    def test_200mph_defers_corrections_then_resumes_without_new_event(self):
+        self.add("0_1_0")
+
+        async def body():
+            self.conn.vel = (89.408, 0.0)  # 200 mph
+            self.s._cm_ready(R, True)
+            await asyncio.sleep(0.08)
+            self.assertEqual(self.starts, [])
+            self.assertTrue(self.s.retex_todo)
+            self.assertIsNotNone(self.s._retex_timer)
+            self.conn.vel = (0.0, 0.0)
+        self.run_loop(body)
+        self.assertEqual(len(self.conn.msgs), 1)
+        self.assertFalse(self.s.retex_todo)
+
     def test_region_that_changes_nothing(self):
         ck = self.add("0_1_0")
 

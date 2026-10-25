@@ -1256,13 +1256,13 @@ function M.update(gov, dt, cam, player)
     local inst = peekImport(cam)
     if not inst then break end
     if inst.material and not inst.mat and not inst.matFailed then
+      local kind = not satmat.exists(inst.material) and 'material'
+        or (satmat.needsRebind(inst.material, inst.texture) and 'retex' or nil)
+      if kind and not gov:try(kind) then break end
+      local materialStart = now()
       if not satmat.exists(inst.material) then
-        if not gov:try('material') then break end
-        local t1 = now()
         local ok, err = pcall(satmat.create, inst.material, inst.texture, inst.detail)
         if not ok then log('E', 'beamngEarth', 'far tile material failed: ' .. tostring(err)) end
-        gov:charge('material', now() - t1)
-        units = units + 1
         if satmat.exists(inst.material) then counters.materials = counters.materials + 1 end
       end
       if satmat.ref(inst.material, inst.texture) then
@@ -1270,6 +1270,9 @@ function M.update(gov, dt, cam, player)
       else
         inst.matFailed = true -- spawn anyway: better a tile without imagery than a hole
       end
+      -- ref may flush/reload an existing pooled material: previously that work was neither
+      -- gated nor charged, so a frame could rebind many slots outside the streaming budget.
+      if kind then gov:charge(kind, now() - materialStart); units = units + 1 end
     else
       local kind = kindOf(inst)
       if not gov:try(kind) then break end

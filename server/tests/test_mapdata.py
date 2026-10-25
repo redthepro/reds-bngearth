@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+import zlib
 from unittest import mock
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
@@ -299,6 +300,33 @@ class CogTest(unittest.TestCase):
         n = len(src.reads)
         c.read_window(0, 0, 64, 32)                                      # two neighbouring tiles: one read
         self.assertEqual(len(src.reads), n + 1)
+
+    def test_damaged_cached_deflate_is_refetched_once(self):
+        data = mf.tiff_bytes(64, 32, 32, lambda x, y: self.image(32, 32))
+        expected = np.tile(self.image(32, 32), (1, 2))
+        with tempfile.TemporaryDirectory() as tmp:
+            url = "https://example.com/test.tif"
+            transport = mf.Transport({url: data})
+            remote = rangeread.RemoteFile([url], len(data), tmp, mf.fetcher(transport))
+            reader = cog.Cog(remote)
+            damaged = bytearray(data)
+            damaged[int(reader.offsets[0])] ^= 0xFF
+            damaged[int(reader.offsets[1])] ^= 0xFF  # two tiles sharing one cached raw block
+            # Same-length damage in both cache tiers; the TIFF header is still valid.
+            Path(remote._path(0)).write_bytes(damaged)
+            remote._remember(0, bytes(damaged))
+            before = transport.count()
+            np.testing.assert_array_equal(reader.read_window(0, 0, 64, 32), expected)
+            self.assertEqual(transport.count(), before + 1)
+            np.testing.assert_array_equal(reader.read_window(0, 0, 64, 32), expected)
+            self.assertEqual(transport.count(), before + 1)
+            # A broken upstream payload fails after one repair attempt, never loops.
+            transport.files[url] = bytes(damaged)
+            remote._remember(0, bytes(damaged))
+            before = transport.count()
+            with self.assertRaises(zlib.error):
+                reader.read_window(0, 0, 32, 32)
+            self.assertLessEqual(transport.count() - before, 1)
 
     def test_predictor_raw_bigendian(self):
         self.check(predictor=2)
@@ -882,6 +910,22 @@ class CacheTest(Sources, SmallBlocks, unittest.TestCase):
         for dx in range(3):
             md.cell(mf.CELL._replace(x=mf.CELL.x + dx), ("roads", "landcover"))
         self.assertEqual(len(md._locks), 0)
+
+    def test_empty_provenance_in_mirror_and_archive_recovers(self):
+        cache = os.path.join(self.tmp, "cache")
+        md, _ = self.mapdata(cache=cache)
+        expected = md.cell(mf.CELL, ("roads",)).digest()
+        p = md.path(mf.CELL, "roads")
+        np.save(os.path.join(md._mirror_dir(p), "provenance.npy"), np.array(""))
+        self.assertIsNone(md._mirror_load(p))
+        self.assertEqual(self.mapdata(cache=cache)[0].cell(mf.CELL, ("roads",)).digest(), expected)
+        arrays = md._load(p)
+        arrays["provenance"] = np.array("")
+        np.savez_compressed(p, **arrays)
+        self.assertIsNone(md._load(p))
+        recovered, transport = self.mapdata(cache=cache)
+        self.assertEqual(recovered.cell(mf.CELL, ("roads",)).digest(), expected)
+        self.assertEqual(transport.count(), 0)  # rebuild from good raw blocks
 
     def test_invalid_key_refused(self):
         md, t = self.mapdata()

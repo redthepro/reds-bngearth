@@ -101,6 +101,7 @@ import dem as demmod  # noqa: E402
 import mapcells  # noqa: E402
 import pacer  # noqa: E402
 import peerwork as peerworkmod  # noqa: E402
+from sharing import SharingServerMixin, share_port  # noqa: E402
 import deshadow as deshadowmod  # noqa: E402
 import farfield  # noqa: E402
 import terraincache  # noqa: E402
@@ -222,9 +223,8 @@ AHEAD_MARGIN_M = 250.0          # m around the block's half width at each point
 # the road tiles' cells (landcover: surface.prefetch). With roads (surface.prefetch has them within 3 km, with the land
 # cover on) and water, which a road tile otherwise fetched itself when it needed it (from KyzoFox's 1.5.4, PR #64)
 AHEAD_LAYERS = ("roads", "buildings", "building_parts", "infrastructure", "water", "land_use")
-FAST_BASE_V = 70.0              # m/s (157 mph): faster, a block waits at most BASE_FAST_WAIT_S for its photo after its
-BASE_FAST_WAIT_S = 0.15         # heights, then goes without it (block_base later): blocks took 0.6-3 s at 600 mph on a
-                                # Steam Deck, mostly the photo (heights 0.1-0.4 s), and the game paused 11 times a minute
+BASE_WAIT_S = 0.15             # follow blocks wait at most this long after their heights for a photo;
+                               # slower photos arrive through block_base, at every driving speed
 PROGRESS_S = 0.5            # load_progress at most this often (Connection.send_progress)
 GROUND_WAIT_S = 90.0        # a block's photo still to be drawn again counts as loading this long at most
 PERF_LOG_LINES, PERF_LOG_CHARS = 40, 2000   # a perf_log message's lines and characters a line, at most
@@ -443,6 +443,7 @@ class TileInfo:
     retex_repeat: int = 0
     credits: frozenset = frozenset()    # data-credit source ids (credits.tile_sources; --credits on only)
     shape: str | None = None    # its shape file when not tile_name(): a copy under a new material name (reslot)
+    source_material: str | None = None  # immutable name in the original cached shape, before slot reuse
 
 
 def predict_centre(px, py, vx, vy, lead, reach=FOLLOW_REACH, grid=heightmap.GRID, min_lead=0.0, min_lead_v=2.0):
@@ -508,7 +509,7 @@ def survey_q(frame, dem, block_m=BLOCK_SURVEY_M):
     return heightmap.choose_q(float((win.max(axis=(2, 3)) - win.min(axis=(2, 3))).max()))
 
 
-class Server:
+class Server(SharingServerMixin):
     def __init__(self, user_dir, cache_dir, tile_workers=3, kfun=None,
                  hysteresis=farfield.HYSTERESIS, radius=farfield.RADIUS, far_format="cdae",
                  imagery=imagerymod.DEFAULT_CHAIN, near_visual="mesh", tex_near=TEX_NEAR, tex_far=TEX_FAR,
@@ -686,7 +687,6 @@ class Server:
         self.hm_inflight = {}
         self.ter_serial = itertools.count()
         self.base_stale = set()         # blocks whose base photo lacks lazy imagery (NAIP) still to come
-        self.fast = False               # the player faster than FAST_BASE_V (the latest pose): photos follow blocks
         self.base_pending = {}          # block -> the analysis regions its base photo was rendered without
         self.base_rev = itertools.count(1)
         self.hm_committed = deque(maxlen=HM_KEEP_COMMITTED)
@@ -1455,7 +1455,8 @@ class Server:
         if mats is not None:          # the .ter's own material list (MATERIALS indices)
             info["mats"] = mats
         info["stages"] = stages
-        return self._finish_heightmap(anchor, cx, cy, info, t0, base)
+        return self._finish_heightmap(anchor, cx, cy, info, t0, base,
+                                      defer_base=progress is None and not provisional)
 
     def tunnels_of(self, anchor, elev, g):
         """anchor.tunnels (roads.TunnelProfiles), made now if not yet (elev: the caller's ground; g: the anchor's
@@ -1572,15 +1573,16 @@ class Server:
         else:
             self.base_stale.add(key)
 
-    def _finish_heightmap(self, anchor, cx, cy, info, t0, base=None):
+    def _finish_heightmap(self, anchor, cx, cy, info, t0, base=None, defer_base=True):
         """The base photo (detail mode; rendered here: the imagery corrections live in this process; base: its
         future from _base_photo, started with the heights), the timings."""
         if base is not None:
             t1 = time.perf_counter()
-            if self.fast and not base.done():
-                concurrent.futures.wait([base], timeout=BASE_FAST_WAIT_S)
-            if self.fast and not base.done():
-                # a fast player (FAST_BASE_V): the block goes now and its photo when done (block_base)
+            if defer_base and not base.done():
+                concurrent.futures.wait([base], timeout=BASE_WAIT_S)
+            if defer_base and not base.done():
+                # Collision is ready; a slow photo must not hold up a follow block.
+                # First-anchor photos stay inline: the client has not committed that anchor yet.
                 info["base"] = None
                 info["stages"]["baseWait"] = time.perf_counter() - t1
                 info["stages"]["baseLater"] = 1.0
@@ -1600,7 +1602,7 @@ class Server:
         return info
 
     def _base_later(self, key, fut, tries=4):
-        """A block sent without its photo (a fast player): the photo, once rendered, onto the block's entry (later
+        """A block sent without its photo: the photo, once rendered, onto the block's entry (later
         terrain_ready answers) and to the mod (block_base: the block in use takes it now, a ready one at its commit)."""
         try:
             name = fut.result()[0]
@@ -1919,48 +1921,6 @@ class Server:
             px = self.tex_size(tile.level)
             self.imagery.prefetch(anchor.frame, *imagerymod.gutter_square(x0, y0, tile.size, px), px, soon=True)
 
-    def share_start(self, port=None):
-        """Compute sharing in a BeamMP group: our GroupHelper listening (started once) on port (the BeamMP server's
-        setting, its plugin's SHARE_PORT; BNGE_SHARE_PORT on this machine wins; else peerwork.SHARE_PORT). -> {port,
-        code} (port None: not sharing)."""
-        if not hasattr(self.far_pool, "set_group"):
-            return {"port": None, "code": peerworkmod.code_id()}
-        self.far_pool.sharing = True        # every tile built is kept from now on (a player arriving gets ours)
-        with self.share_lock:
-            if self.group_helper is None:
-                self.group_helper = peerworkmod.GroupHelper(self.far_pool, self.anchor_id_for,
-                                                            os.path.join(self.cache_dir, "peer-out"))
-                self.group_helper.start(share_port(port))
-        return {"port": self.group_helper.port, "code": peerworkmod.code_id(), "weight": peerworkmod.share_weight()}
-
-    def share_group(self, msg):
-        """The mod's "peers": {me, members: [{id, host, port, code}]}: the players on our anchor with our code."""
-        if not hasattr(self.far_pool, "set_group"):
-            return
-        code = peerworkmod.code_id()
-        members, weights = [], {}
-        for m in msg.get("members") or []:
-            try:
-                if m.get("code") == code and m.get("host") and 0 < int(m.get("port")) < 65536:
-                    members.append((str(m["id"]), str(m["host"]), int(m["port"])))
-                    w = float(m.get("weight") or 1.0)
-                    weights[str(m["id"])] = w if 0.1 <= w <= 1000 else 1.0
-            except (TypeError, ValueError, AttributeError):
-                continue
-        self.far_pool.set_group(str(msg.get("me")), members, weights)
-
-    def anchor_id_for(self, lat, lon):
-        """Our anchor id at (lat, lon) when we have one there (its graders are made already), else the helper's."""
-        for a in list(self.anchors.values()):
-            if float(a.lat) == lat and float(a.lon) == lon:
-                return a.id
-        return peerworkmod._anchor_id(lat, lon)
-
-    def remote_slots(self):
-        """Far tiles compute sharing's helpers build at once (0 without helpers)."""
-        f = getattr(self.far_pool, "remote_slots", None)
-        return f() if f is not None else 0
-
     def make_tile(self, anchor, tile, prev=None):
         """Worker thread: build and write one far tile (and its texture). Returns its TileInfo.
         prev: the tile's stale TileInfo (--colormatch): only its texture is rendered again."""
@@ -2021,8 +1981,10 @@ class Server:
             x0, y0, _, _ = tile.bbox
             try:
                 px = self.tex_size(lvl)
-                rgb, used = self.imagery.render(anchor.frame, *imagerymod.gutter_square(x0, y0, tile.size, px), px,
-                                                pending=pending)
+                # Show the terrain now; _tile_done tracks pending corrections and refreshes its texture later.
+                with self.deshadow.no_wait() if self.deshadow is not None else contextlib.nullcontext():
+                    rgb, used = self.imagery.render(anchor.frame, *imagerymod.gutter_square(x0, y0, tile.size, px), px,
+                                                    pending=pending)
                 rgb = self.rock_faces(anchor, tile, px, rgb, built.grid)
                 rgb = self.road_faces(anchor, tile, px, rgb)
                 texture = self.texture_name(anchor.id, tile.key, self.tex_rev.get((anchor.id, tile.key), 0))
@@ -2114,8 +2076,9 @@ class Server:
         px = self.tex_size(tile.level)
         pending = set()
         try:
-            rgb, used = self.imagery.render(anchor.frame, *imagerymod.gutter_square(x0, y0, tile.size, px), px,
-                                            pending=pending)
+            with self.deshadow.no_wait() if self.deshadow is not None else contextlib.nullcontext():
+                rgb, used = self.imagery.render(anchor.frame, *imagerymod.gutter_square(x0, y0, tile.size, px), px,
+                                                pending=pending)
         except imagerymod.ImageryError as e:
             log.debug("tile %s of anchor %d: texture not rendered again (%s)", tile.key, anchor.id, e)
             return prev
@@ -2273,8 +2236,9 @@ class Server:
         try:
             with open(src, "rb") as fh:
                 data = fh.read()
-            if new != info.material:
-                data = matslotsmod.restamp(data, info.material, new)
+            source_material = info.source_material or info.material
+            if new != source_material:
+                data = matslotsmod.restamp(data, source_material, new)
             dst = os.path.join(self.out_dir, name)
             tmp = staging.tmp_for(dst)
             with open(tmp, "wb") as fh:
@@ -2285,7 +2249,7 @@ class Server:
             return info
         if not pooled and info.shape is not None:
             self.queue_delete([os.path.join(self.out_dir, info.shape)])
-        info = self.tiles[ck] = replace(info, material=new, shape=name)
+        info = self.tiles[ck] = replace(info, material=new, shape=name, source_material=source_material)
         return info
 
     def _evict_tile(self, ck):
@@ -2367,6 +2331,10 @@ class Server:
                     self.retex_stats["dropped"] += 1
                 continue
             t = farfield.tile_of(ck[1])
+            # Colour/shadow corrections can wait while driving fast. Keep the existing imagery;
+            # reserve tile workers and engine texture reloads for terrain arriving ahead.
+            if any(math.hypot(*getattr(c, "vel", (0.0, 0.0))) >= 30.0 for c in viewers):
+                continue
             d = min(t.distance(*c.view_focus) for c in viewers)
             if best is None or (d, ck) < (bd, best):
                 best, bd = ck, d
@@ -2383,6 +2351,8 @@ class Server:
                 return
             ck = self._retex_pick()
             if ck is None:
+                if self.retex_todo:  # deferred for speed: resume even without another region-ready event
+                    self._retex_timer = self.loop.call_later(1.0, self._retex_wake)
                 return
             self.retex_todo.discard(ck)
             self._retex_next = time.monotonic() + 1.0 / self.retex_rate
@@ -2845,6 +2815,8 @@ class Connection:
             log.warning("client %s: %s", self.peer, e)
         finally:
             self.s.connections.discard(self)
+            if not self.s.connections:
+                self.s.share_stop()
             self.s.slots_let_go(list(self.slot_holds))
             self.slot_holds = {}
             for tr in (self.roads, self.veg, self.bldfar, self.nav):
@@ -2933,7 +2905,11 @@ class Connection:
         elif kind == "share":                   # a BeamMP session: serve our group (peerwork.GroupHelper)
             self.send(dict(self.s.share_start(msg.get("port")), type="share"))
         elif kind == "peers":                   # the players on our anchor (the BeamMP plugin, through mpsession)
-            self.s.share_group(msg)
+            reply = self.s.share_group(msg)
+            if reply is not None:
+                self.send(dict(reply, type="share"))
+        elif kind == "share_stop":
+            self.s.share_stop()
         elif kind == "prepare_terrain":
             self.spawn(self.prepare_terrain(msg))
         elif kind == "commit_anchor":
@@ -3309,7 +3285,6 @@ class Connection:
         else:
             return
         self.vel = (vx, vy)
-        self.s.fast = math.hypot(vx, vy) > FAST_BASE_V
         if self.s.boost_on:
             since = time.monotonic() - getattr(self, "boost_t0", 0.0)
             moving = math.hypot(vx, vy) > BOOST_MOVE_MS and since > BOOST_GRACE_S     # (the car settling: not moving)
@@ -4122,20 +4097,6 @@ async def main_async(args):
             map_srv.close()
         net.close()                 # today's request counters
         disk.close()                # the cache's last uses
-
-
-def share_port(asked=None, env=None):
-    """The port our BeamMP group service listens on: BNGE_SHARE_PORT on this machine, else the BeamMP server's (its
-    plugin's SHARE_PORT, through the mod's "share"), else peerwork.SHARE_PORT; an unusable one is skipped."""
-    env = os.environ.get("BNGE_SHARE_PORT") if env is None else env
-    for p in (env, asked):
-        try:
-            p = int(p)
-        except (TypeError, ValueError):
-            continue
-        if 1024 <= p <= 65535:
-            return p
-    return peerworkmod.SHARE_PORT
 
 
 def parse_cache_cap(text):

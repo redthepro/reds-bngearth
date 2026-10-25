@@ -38,6 +38,7 @@ import logging
 import math
 import os
 import queue
+import secrets
 import socket
 import socketserver
 import struct
@@ -47,15 +48,18 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 
 import numpy as np
+import peerauth
+from peercache import ReplyCache
 
 log = logging.getLogger("earthd.peerwork")
 
-PROTOCOL = 1
+PROTOCOL = 2
 PORT = 47620
 MAGIC = b"BNGE"
 MAX_HEADER = 1 << 16
 MAX_BLOBS = 8
 MAX_BLOB = 64 << 20
+MAX_MESSAGE = 64 << 20
 JOBS = ("far_geometry", "far_tile")
 CONNECT_S = 3.0
 JOB_TIMEOUT_S = 120.0
@@ -90,7 +94,7 @@ def source_id(server_dir=None):
     for name in sorted(os.listdir(here)):
         if name.endswith(".py"):
             with open(os.path.join(here, name), "rb") as f:
-                h.update(name.encode() + b"\0" + f.read())
+                h.update(name.encode() + b"\0" + f.read().replace(b"\r\n", b"\n"))
     return h.hexdigest()[:16]
 
 
@@ -160,22 +164,24 @@ def decode_msg(data):
     return recv_msg(_Bytes(data))
 
 
-def recv_msg(sock):
+def recv_msg(sock, max_bytes=MAX_MESSAGE, allow_blobs=True):
     if _recv_exact(sock, 4) != MAGIC:
         raise ValueError("not a BeamNG.Earth peer")
     n = struct.unpack("<I", _recv_exact(sock, 4))[0]
-    if n > MAX_HEADER:
+    if n > min(MAX_HEADER, max_bytes):
         raise ValueError("header too large")
     header = json.loads(_recv_exact(sock, n).decode())
     if not isinstance(header, dict):
         raise ValueError("bad header")
     k = struct.unpack("<H", _recv_exact(sock, 2))[0]
-    if k > MAX_BLOBS:
+    if k > MAX_BLOBS or (k and not allow_blobs):
         raise ValueError("too many blobs")
     blobs = []
+    total = n
     for _ in range(k):
         m = struct.unpack("<Q", _recv_exact(sock, 8))[0]
-        if m > MAX_BLOB:
+        total += m
+        if m > MAX_BLOB or total > max_bytes:
             raise ValueError("blob too large")
         blobs.append(_recv_exact(sock, m))
     return header, blobs
@@ -188,6 +194,18 @@ def _npy(a):
 
 
 def _from_npy(b):
+    # Check the declared allocation before numpy reads a peer-controlled shape.
+    stream = io.BytesIO(b)
+    v = np.lib.format.read_magic(stream)
+    if v == (1, 0):
+        shape, _, dtype = np.lib.format.read_array_header_1_0(stream)
+    elif v == (2, 0):
+        shape, _, dtype = np.lib.format.read_array_header_2_0(stream)
+    else:
+        raise ValueError("unsupported peer array format")
+    size = math.prod(shape) * dtype.itemsize
+    if dtype.hasobject or size > MAX_BLOB or size != len(b) - stream.tell():
+        raise ValueError("invalid peer array size or dtype")
     return np.lib.format.read_array(io.BytesIO(b), allow_pickle=False)
 
 
@@ -273,52 +291,6 @@ def share_weight():
     """This machine's capacity for its group (owner_of): its CPU threads, half on the small profile."""
     import budget
     return round((os.cpu_count() or 4) * (0.5 if budget.small() else 1.0), 1)
-
-
-class ReplyCache:
-    """Job replies kept on disk (root/<key[:2]>/<key>.bin, the wire format), at most max_bytes: the oldest go first."""
-
-    def __init__(self, root, max_bytes=CACHE_BYTES):
-        self.root, self.max_bytes = root, max_bytes
-        self.lock = threading.Lock()
-        self.sizes = {}                 # key -> bytes, oldest first (dicts keep insertion order)
-        self.total = 0
-
-    def _path(self, key):
-        return os.path.join(self.root, key[:2], key + ".bin")
-
-    def get(self, key):
-        with self.lock:
-            if key not in self.sizes:
-                return None
-            self.sizes[key] = self.sizes.pop(key)       # (now the newest)
-        try:
-            with open(self._path(key), "rb") as f:
-                return decode_msg(f.read())
-        except (OSError, ValueError):
-            return None
-
-    def put(self, key, header, blobs):
-        data = encode_msg(header, blobs)
-        path = self._path(key)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = f"{path}.{threading.get_ident()}.tmp"
-        with open(tmp, "wb") as f:
-            f.write(data)
-        os.replace(tmp, path)
-        drop = []
-        with self.lock:
-            self.total += len(data) - self.sizes.pop(key, 0)
-            self.sizes[key] = len(data)
-            while self.total > self.max_bytes and len(self.sizes) > 1:
-                old = next(iter(self.sizes))
-                self.total -= self.sizes.pop(old)
-                drop.append(old)
-        for k in drop:
-            try:
-                os.remove(self._path(k))
-            except OSError:
-                pass
 
 
 def reply_of(name, result, tex=None):
@@ -473,8 +445,9 @@ def _anchor_id(lat, lon):
 class Helper:
     """A helper's worker pools, one per settings combination (made on first use), and its TCP service."""
 
-    def __init__(self, cache_dir, workers, out_dir):
+    def __init__(self, cache_dir, workers, out_dir, token=None):
         self.cache_dir, self.workers, self.out_dir = cache_dir, workers, out_dir
+        self.token = token or os.environ.get("BNGE_PEER_TOKEN", "")
         self.pools = {}
         self.lock = threading.Lock()
         self.done = 0
@@ -501,22 +474,19 @@ class Helper:
 
     def handle(self, sock, addr):
         try:
-            h, _ = recv_msg(sock)
-            mine = self.hello()
-            if h.get("op") != "hello" or h.get("protocol") != PROTOCOL or h.get("code") != mine["code"]:
-                send_msg(sock, dict(mine, ok=False, error="a different BeamNG.Earth version"))
-                return
-            send_msg(sock, mine)
+            channel = peerauth.server(sock, self.token, self.hello())
             while True:
-                h, _ = recv_msg(sock)
+                h, blobs = channel.receive()
+                if blobs:
+                    raise ValueError("job requests cannot contain blobs")
                 t0 = time.perf_counter()
                 try:
                     op, settings, kw = check_job(h)
                     head, blobs = self.pool(settings).submit(run_job, op, kw, self.out_dir).result(JOB_TIMEOUT_S)
                 except Exception as e:      # a bad request or a failed build: told, the connection kept
-                    send_msg(sock, {"ok": False, "error": f"{type(e).__name__}: {e}"[:500]})
+                    channel.send({"ok": False, "error": f"{type(e).__name__}: {e}"[:500]})
                     continue
-                send_msg(sock, head, blobs)
+                channel.send(head, blobs)
                 with self.lock:
                     self.done += 1
                     n = self.done
@@ -532,13 +502,15 @@ class Helper:
                 pass
 
     def serve(self, host, port):
+        if not peerauth.token(self.token):
+            raise ValueError("set BNGE_PEER_TOKEN to a random 64-character hex secret on both computers")
         helper = self
 
         class H(socketserver.BaseRequestHandler):
             def handle(self):
                 helper.handle(self.request, self.client_address)
 
-        class S(socketserver.ThreadingTCPServer):
+        class S(peerauth.BoundedServer):
             daemon_threads = True
             allow_reuse_address = True
         with S((host, port), H) as srv:
@@ -556,23 +528,23 @@ class GroupHelper:
         self.pool, self.aid_for, self.out_dir = pool, aid_for, out_dir
         os.makedirs(out_dir, exist_ok=True)
         self.port = None
+        self.server = None
 
     def handle(self, sock, addr):
         try:
-            h, _ = recv_msg(sock)
+            key = self.pool.group_key()
             mine = {"ok": True, "protocol": PROTOCOL, "version": version(), "code": code_id(), "workers": GROUP_CONNS}
-            if h.get("op") != "hello" or h.get("protocol") != PROTOCOL or h.get("code") != mine["code"]:
-                send_msg(sock, dict(mine, ok=False, error="a different BeamNG.Earth version"))
-                return
-            send_msg(sock, mine)
+            channel = peerauth.server(sock, key, mine)
             while True:
-                h, _ = recv_msg(sock)
+                h, request_blobs = channel.receive()
+                if key != self.pool.group_key() or request_blobs:
+                    raise ValueError("sharing group expired or invalid request")
                 try:
                     head, blobs = self.pool.serve(h, self.aid_for, self.out_dir)
                 except Exception as e:
-                    send_msg(sock, {"ok": False, "error": f"{type(e).__name__}: {e}"[:500]})
+                    channel.send({"ok": False, "error": f"{type(e).__name__}: {e}"[:500]})
                     continue
-                send_msg(sock, head, blobs)
+                channel.send(head, blobs)
         except (ConnectionError, OSError, ValueError) as e:
             log.debug("group helper: %s: %s", addr, e)
         finally:
@@ -589,7 +561,7 @@ class GroupHelper:
             def handle(self):
                 helper.handle(self.request, self.client_address)
 
-        class S(socketserver.ThreadingTCPServer):
+        class S(peerauth.BoundedServer):
             daemon_threads = True
             allow_reuse_address = False
         for p in range(port, port + tries):
@@ -598,37 +570,46 @@ class GroupHelper:
             except OSError:
                 continue
             threading.Thread(target=srv.serve_forever, daemon=True, name="group-helper").start()
+            self.server = srv
             self.port = p = srv.server_address[1]           # (port 0: the one picked)
             log.info("compute sharing: serving our group on port %d (code %s)", p, code_id())
             return p
         log.warning("compute sharing: no free port in %d..%d", port, port + tries - 1)
         return None
 
+    def stop(self):
+        if self.server is not None:
+            self.server.shutdown()
+            self.server.server_close()
+            self.server = None
+            self.port = None
+
 
 class _Conn:
-    def __init__(self, host, port):
+    def __init__(self, host, port, token=None):
         self.host, self.port = host, port
+        self.token = token if token is not None else os.environ.get("BNGE_PEER_TOKEN", "")
         self.sock = None
+        self.channel = None
 
     def open(self):
         s = socket.create_connection((self.host, self.port), timeout=CONNECT_S)
-        s.settimeout(JOB_TIMEOUT_S)
-        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        send_msg(s, {"op": "hello", "protocol": PROTOCOL, "version": version(), "code": code_id()})
-        h, _ = recv_msg(s)
-        if not h.get("ok"):
+        try:
+            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            channel, h = peerauth.client(s, self.token,
+                {"protocol": PROTOCOL, "version": version(), "code": code_id()}, JOB_TIMEOUT_S)
+        except BaseException:
             s.close()
-            raise ConnectionError(f"{self.host}:{self.port}: {h.get('error', 'refused')} "
-                                  f"(theirs {h.get('version')} {h.get('code')}, ours {version()} {code_id()})")
-        self.sock = s
+            raise
+        self.sock, self.channel = s, channel
         return int(h.get("workers") or 1)
 
     def call(self, header):
         if self.sock is None:
             self.open()
         try:
-            send_msg(self.sock, header)
-            return recv_msg(self.sock)
+            self.channel.send(header)
+            return self.channel.receive()
         except Exception:
             self.close()
             raise
@@ -640,6 +621,7 @@ class _Conn:
             except OSError:
                 pass
             self.sock = None
+            self.channel = None
 
 
 class SharedFarPool:
@@ -661,6 +643,7 @@ class SharedFarPool:
         self.member_down = {}               # member id -> monotonic time it failed (its tiles built here meanwhile)
         self.inflight = {}                  # job key -> Future of the (header, blobs) reply being built here
         self.sharing = False                # a BeamMP session (earthd share_start): every tile built here is kept
+        self.session_token = secrets.token_hex(32)
         self.io = ThreadPoolExecutor(MAX_SLOTS * 2, thread_name_prefix="peer-io")
         for host, port in peers:
             threading.Thread(target=self._join, args=(host, port), daemon=True, name="peer-join").start()
@@ -691,30 +674,57 @@ class SharedFarPool:
         g = self.group
         return min(MAX_SLOTS, self.slots + (GROUP_CONNS * (len(g["ids"]) - 1) if g else 0))
 
-    def set_group(self, me, members, weights=None):
+    def group_key(self):
+        g = self.group
+        return g["key"] if g is not None else None
+
+    def set_group(self, me, members, weights=None, tokens=None):
         """The players sharing our anchor: me (our id), members [(id, host, port)] (us among them or not), weights
         {id: capacity} (owner_of; 1 when left out). Fewer than two: no group (everything built here)."""
         me = str(me)
-        addr = {str(i): (str(h), int(p)) for i, h, p in members if str(i) != me}
+        tokens = {str(k): v for k, v in (tokens or {}).items() if peerauth.token(v)}
+        # Our own credential must have made the round trip through BeamMP. A stale
+        # group from a previous game/server session must never authorize work.
+        if tokens.get(me) != self.session_token:
+            members = []
+        addr = {str(i): (str(h), int(p)) for i, h, p in members if str(i) != me and str(i) in tokens}
         ids = sorted(set(addr) | {me})
+        key = hashlib.sha256(json.dumps([(i, tokens.get(i)) for i in ids], separators=(",", ":")).encode()).hexdigest()
         weights = {str(k): float(v) for k, v in (weights or {}).items()}
         with self.lock:
             old = self.group
+            rotated = old is not None and bool(set(old["ids"]) - set(ids))
+            if rotated:
+                self.session_token = secrets.token_hex(32)
+                addr, ids = {}, [me]
             conns = {}
             for i, a in addr.items():
-                if old is not None and old["addr"].get(i) == a:
+                if old is not None and old["addr"].get(i) == a and old["key"] == key:
                     conns[i] = old["conns"][i]
                 else:
                     q = queue.Queue()
                     for _ in range(GROUP_CONNS):
-                        q.put(_Conn(*a))
+                        q.put(_Conn(*a, token=key))
                     conns[i] = q
-            self.group = {"me": me, "ids": ids, "addr": addr, "conns": conns, "weights": weights} \
+            self.group = {"me": me, "ids": ids, "addr": addr, "conns": conns, "weights": weights, "key": key} \
                 if len(ids) > 1 else None
+            if old is None or old["key"] != key:
+                self.member_down.clear()
+        if old is not None:
+            for i, q in old["conns"].items():
+                if conns.get(i) is not q:
+                    for _ in range(q.qsize()):
+                        try:
+                            conn = q.get_nowait()
+                        except queue.Empty:     # an in-flight job took the last one
+                            break
+                        conn.close()
+                        q.put(conn)
         if (old["ids"] if old else [me]) != ids:
             log.info("compute sharing: group of %d (%s), we are %s", len(ids), ", ".join(
                 (f"{i}@{addr[i][0]}:{addr[i][1]}" if i in addr else f"{i} (us)") + f" x{weights.get(i, 1.0):g}"
                 for i in ids), me)
+        return rotated
 
     def _once(self, key, build, need=None):
         """The reply of job key: the cache's, the build under way here, or build() now (kept in the cache); need:
@@ -952,9 +962,13 @@ def main(argv=None):
     ap.add_argument("cmd", choices=["serve"])
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=PORT)
-    ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
+    ap.add_argument("--workers", type=int, default=min(MAX_SLOTS, max(1, (os.cpu_count() or 2) - 2)))
     ap.add_argument("--cache-dir", default=os.path.expanduser("~/.cache/beamng-earth"))
     a = ap.parse_args(argv)
+    if not peerauth.token(os.environ.get("BNGE_PEER_TOKEN")):
+        ap.error("set BNGE_PEER_TOKEN to a random 64-character hex secret on both computers")
+    if not 1 <= a.workers <= MAX_SLOTS:
+        ap.error(f"--workers must be between 1 and {MAX_SLOTS}")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     out = os.path.join(a.cache_dir, "peer-out")
     os.makedirs(out, exist_ok=True)

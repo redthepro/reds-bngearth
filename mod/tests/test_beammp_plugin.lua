@@ -46,11 +46,11 @@ G.SHARE_PORT = 47621
 
 -- peers: the sharing players on one anchor, the same sorted list for each; a player on another anchor alone
 G.players = {}
-G.onPose(1, { v = G.PROTO, aLat = 40, aLon = -111.9, lat = 40, lon = -111.9, sp = 47621, sc = 'c1' }, 'u1')
-G.onPose(2, { v = G.PROTO, aLat = 40, aLon = -111.9, lat = 40.01, lon = -111.9, sp = 47621, sc = 'c1' }, 'u2')
-G.onPose(3, { v = G.PROTO, aLat = 45.46, aLon = 9.19, lat = 45.46, lon = 9.19, sp = 47621, sc = 'c1' }, 'it')
+G.onPose(1, { v = G.PROTO, aLat = 40, aLon = -111.9, lat = 40, lon = -111.9, sp = 47621, sc = 'c1', st = string.rep('a', 64) }, 'u1')
+G.onPose(2, { v = G.PROTO, aLat = 40, aLon = -111.9, lat = 40.01, lon = -111.9, sp = 47621, sc = 'c1', st = string.rep('a', 64) }, 'u2')
+G.onPose(3, { v = G.PROTO, aLat = 45.46, aLon = 9.19, lat = 45.46, lon = 9.19, sp = 47621, sc = 'c1', st = string.rep('a', 64) }, 'it')
 G.onPose(4, { v = G.PROTO, aLat = 40, aLon = -111.9, lat = 40, lon = -111.9 }, 'noshare')
-G.onPose(5, { v = G.PROTO, aLat = 40, aLon = -111.9, lat = 40, lon = -111.9, sp = 99999, sc = 'c1' }, 'badport')
+G.onPose(5, { v = G.PROTO, aLat = 40, aLon = -111.9, lat = 40, lon = -111.9, sp = 99999, sc = 'c1', st = string.rep('a', 64) }, 'badport')
 for pid, ip in pairs({ [1] = '10.0.0.1', [2] = '10.0.0.2', [3] = '10.0.0.3', [4] = '10.0.0.4', [5] = '10.0.0.5' }) do
   G.players[pid].ip = ip
 end
@@ -59,6 +59,15 @@ T.check(pe[1] and #pe[1].members == 2 and pe[1].members[1].id == '1' and pe[1].m
   and pe[2] and G.peersKey(pe[1]) == G.peersKey(pe[2]), 'peers: Utah\'s two share one list')
 T.check(pe[3] and #pe[3].members == 1, 'peers: Italy alone')
 T.check(pe[4] == nil and pe[5] == nil, 'peers: no sharing port (or a bad one): left out')
+T.check(pe[1].members[1].token == string.rep('a', 64), 'credentials reach the anchor group')
+T.check(G.anchors(G.live())['1'].token == nil and G.anchors(G.live())['1'].st == nil,
+  'public anchors never contain credentials')
+local signature = G.peersKey(pe[1])
+G.players[2].st = string.rep('b', 64)
+T.check(G.peersKey(G.peers(G.live())[1]) ~= signature, 'credential rotation resends the group')
+G.players[2].st = nil
+local legacy = G.peers(G.live())
+T.check(#legacy[1].members == 1 and legacy[2] == nil, 'a legacy player cannot join authenticated sharing')
 G.players, G.sentPeers = {}, {}
 
 -- bad input ignored; stale poses and players who left out
@@ -71,4 +80,17 @@ T.check(next(G.tick(0)) == nil, 'no pose for STALE_S: left out')
 G.onLeave(1)
 T.check(G.players[1] == nil, 'left: forgotten')
 
+-- A stale player must receive an empty group to revoke the last credentials.
+local events = {}
+MP = { RegisterEvent = function() end, CreateEventTimer = function() end,
+  TriggerClientEvent = function(pid, name, data) events[#events + 1] = {pid, name, data} end }
+Util = { JsonEncode = function(t) return t end }
+local wired = dofile(dir .. '/../../beammp/Server/BeamNGEarth/main.lua')
+wired.sentPeers[7] = 'old group'
+BNGE_tick()
+local revoked = false
+for _, event in ipairs(events) do
+  if event[1] == 7 and event[2] == 'bngePeers' then revoked = #event[3].members == 0 end
+end
+T.check(revoked and wired.sentPeers[7] == nil, 'stale group explicitly revoked')
 T.done('test_beammp_plugin')

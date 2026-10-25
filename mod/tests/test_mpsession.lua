@@ -161,4 +161,15 @@ T.check(la == 40.0 or la == 40.02, 'pickAnchor: skip leaves our own out')
 -- reset: every car back on
 ms.reset()
 T.check(stranger.active == 1 and next(ms.state().deactivated) == nil, 'reset: the cars back on')
+local net, requests = require('beamngEarth/net'), {}
+net.send = function(msg) requests[#requests + 1] = msg end
+ms.onShare({ port = 47621, code = 'test', token = string.rep('a', 64) })
+ms.onServerHello()
+ms.update(ms.CONFIG_WAIT_S + 1, anchor, { x = 100, y = 0, z = 0 })
+T.check(#requests == 1 and requests[1].type == 'share', 'companion reconnect requests fresh sharing credentials')
+ms.onShare({ port = 47621, code = 'test', token = string.rep('b', 64) })
+ms.update(0.01, anchor, { x = 100, y = 0, z = 0 })
+T.check(sent[#sent].data:find(string.rep('b', 64), 1, true) ~= nil, 'new credentials reach the BeamMP pose')
+ms.reset()
+T.check(requests[#requests].type == 'share_stop', 'leaving multiplayer revokes sharing')
 T.done('test_mpsession')

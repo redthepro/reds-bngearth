@@ -859,6 +859,7 @@ class DdsTest(unittest.TestCase):
             self.assertEqual(len(imagery.encode_dds(np.zeros((px, px, 3), np.uint8))), want)
 
 
+@unittest.skipIf(os.environ.get("BNGE_TEST_OFFLINE") == "1", "live imagery downloads disabled")
 class NetworkImageryTest(unittest.TestCase):
     """Real sources (a handful of tiles, cached across runs)."""
 

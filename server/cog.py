@@ -279,7 +279,20 @@ class Cog:
                 self.reads += 1
                 for i in group:
                     o, n = int(self.offsets[i]) - start, int(self.counts[i])
-                    tile = self._decode(blob[o:o + n])
+                    try:
+                        tile = self._decode(blob[o:o + n])
+                    except (zlib.error, ValueError):
+                        # A cached block can have the right length but damaged bytes. Re-fetch
+                        # this tile's range once, without discarding other cells or looping forever.
+                        if not hasattr(self.remote, "invalidate"):
+                            raise
+                        pos = int(self.offsets[i])
+                        self.remote.invalidate(pos, pos + n)
+                        # Refresh the grouped buffer too: neighbouring tiles may share the same
+                        # repaired block. Keeping the old blob would download that block repeatedly.
+                        blob = self.remote.read(start, end, self.kind)
+                        tile = self._decode(blob[o:o + n])
+                        self.reads += 1
                     if self.tiles is not None:      # (the part inside the image: an overview's tile is mostly padding)
                         ty_, tx_ = divmod(i, self.tiles_x)
                         tile = np.ascontiguousarray(tile[:min(self.tile_h, self.height - ty_ * self.tile_h),

@@ -99,6 +99,9 @@ the mod, report problems, and get an IP to join a BeamMP.Earth server (see [Mult
 - Uses your graphics card for some of the world server's work (colour matching of the photos, compressing the distant
   textures) when it can, so the server needs less of your CPU; without a usable one the CPU does it as before.
 - Offline play from the download cache (with a size cap and "clear cache").
+- Terrain loads progressively: distant tiles appear before shadow correction finishes, then receive updated
+  textures. While driving, collision blocks wait at most 150 ms for their aerial photo after their heights are
+  ready; a slower photo follows separately. First-anchor photos stay inline so they arrive with the new location.
 - Updates: the mod tells you in game (and on its settings page, with a link) when a newer version is on GitHub;
   with the downloaded app (.exe / AppImage), **Update now** downloads it next to your copy, checks it against
   GitHub's checksum, and the next time you start BeamNG.Earth the new version starts (your old file and shortcut
@@ -120,7 +123,7 @@ the mod, report problems, and get an IP to join a BeamMP.Earth server (see [Mult
 as you visit places, up to 20 GB by default; settings page > "Download cache size" sets 5-50 GB), and an internet
 connection (the map is downloaded while you play).
 
-1. **Download** the file for your system from the [Releases](https://github.com/TecnaGamer/BeamNG.Earth/releases)
+1. **Download** the file for your system from the [Releases](https://github.com/redthepro/bngearth/releases)
    page:
    - **Windows:** `BeamNG.Earth-<version>.exe`. Windows may warn about an unknown app: **More info > Run anyway**.
    - **Linux:** `BeamNG.Earth-<version>-x86_64.AppImage`. Make it executable (right-click > Properties >
@@ -158,9 +161,12 @@ More detail (traffic, the status bar, reporting problems, troubleshooting): [doc
 **Compute sharing (optional, for tinkerers):** another computer on your network can build part of the distant
 landscape for you. On it, from a copy of the same version's source: `python3 server/peerwork.py serve` (port 47620,
 `--workers N` processes; it downloads its own map data). On the computer you play on, set `BNGE_PEERS` to the
-helpers before starting BeamNG.Earth, for example `BNGE_PEERS=192.168.1.20:47620,192.168.1.21:47620`. Helpers
-running other code are left out, and anything a helper fails on is built on your own computer. Only use helpers on a
-network you trust: the connection is not encrypted.
+helpers before starting BeamNG.Earth, for example `BNGE_PEERS=192.168.1.20:47620,192.168.1.21:47620`.
+Before starting either computer, set `BNGE_PEER_TOKEN` to the same random secret generated with
+`python3 -c "import secrets; print(secrets.token_hex(32))"` (64 hexadecimal characters). For example, use
+`$env:BNGE_PEER_TOKEN = '<secret>'` in PowerShell or `export BNGE_PEER_TOKEN='<secret>'` on Linux.
+Helpers require this credential; old or incompatible helpers fall back to local generation. Messages are
+authenticated and replay-protected, but not encrypted, so use a trusted network.
 
 ### Developer setup
 `python3 install.py` also works from a checkout (mod copy, `.venv`, then `python3 start.py`); by hand:
@@ -177,11 +183,31 @@ network you trust: the connection is not encrypted.
 
 Player downloads: `python3 tools/build_app.py` builds this system's AppImage / .exe (PyInstaller; see its
 docstring; for the .exe run `tools/build_bootloader.py` first: a bootloader built from source, fewer antivirus
-false positives); GitHub Actions (`.github/workflows/release.yml`) builds both and publishes the release `v<VERSION>`
-whenever `main` gets a `VERSION` without one. Release zip of the source: `python3 tools/package.py`.
+false positives). Every push to `main` runs the Windows/Linux regression suites, compiles the Rust kernels,
+builds and smoke-tests both executables, and publishes a GitHub release with the matching BeamMP package and
+`SHA256SUMS.txt`. No version bump is required: releases use
+`v<VERSION>-build.<workflow-run-number>.g<commit-sha>`, and that version is embedded in the downloads.
+Failed tests or builds prevent publication. Separate pushes keep their own builds; an older build finishing late
+cannot replace the current main build as Latest. Preview/alpha/rc versions remain prereleases.
+Manual Actions runs build downloadable artifacts by default; select **release** to publish them too.
+The workflow uses GitHub's built-in token with release write access confined to the publishing job.
+Release zip of the source: `python3 tools/package.py`.
 
-Tests: `cd server && python3 -m unittest discover -s tests -t tests` and
-`cd mod/tests && for f in test_*.lua; do luajit $f; done`.
+Tests: `python3 tools/run_tests.py` and `python3 tools/run_lua_tests.py` (install LuaJIT, or `pip install lupa`
+for its bundled LuaJIT on Windows). Run the two map suites with `node server/tests/test_mapmath.mjs` and
+`node mod/tests/test_mapmath.mjs`. For the offline CI suite, set `BNGE_TEST_OFFLINE=1` and `BNGE_SKIP_DRIVE=1`;
+live map-download and long network-drive tests remain available separately. The Windows/Linux regression jobs
+must pass before release packages are built or published.
+
+`python server/tests/bench_loading.py` compares blocking and progressive terrain loading with controlled
+one-second imagery delays. It runs offline and checks that the texture bytes match; its timings isolate
+cosmetic waits rather than predicting an entire location's load time.
+
+**Fork update channel:** `UPDATE_REPO` selects the GitHub repository used for update checks and downloads
+(`redthepro/bngearth` here). Set `BNGE_UPDATE_REPO=owner/repository` to override it, or `BNGE_UPDATE_REPO=off`
+to disable updates. Missing or invalid configuration disables updates; it never falls back to upstream.
+Release builds embed the CI repository, unless explicitly overridden. Updates staged for another repository
+are not launched. A fork needs its own release assets before automatic updates can download anything.
 
 ## Multiplayer (BeamMP)
 
@@ -208,8 +234,13 @@ picks another (the server tells your app which): on the same network it just wor
 port in your router, or you simply build everything yourself. A port of your own: set the environment variable
 `BNGE_SHARE_PORT` before starting the app.
 
+Use this fork's updated BeamMP server plugin and mod together. The plugin distributes session credentials only
+to players sharing an anchor; credentials change when members leave, and leaving multiplayer closes the sharing
+listener. Old plugins/clients cannot authorize shared work and generation stays local. Only join servers you
+trust with the group's credentials. No manual `BNGE_PEER_TOKEN` is needed for BeamMP sharing.
+
 **Hosting a server:** download `BeamNG.Earth-BeamMP-Server-<version>.zip` from the
-[Releases](https://github.com/TecnaGamer/BeamNG.Earth/releases) page and follow the guide inside
+[Releases](https://github.com/redthepro/bngearth/releases) page and follow the guide inside
 (`BeamNG.Earth-README.md`). In short: unzip it into a BeamMP server's folder, set
 `Map = "/levels/beamng_earth/info.json"` in `ServerConfig.toml`, forward the server's port (TCP and UDP) for players
 over the internet, and start it (its log shows `[BeamNG.Earth] plugin loaded`). The players' sharing port (47621) is

@@ -412,16 +412,19 @@ def under_decks(rows, decks, wires=None):
     return out
 
 
-def place(roads, walks, box, curb_h=0.15, wires=None, town=False, left_hand=False, speeds=None, mph=True, decks=()):
+def place(roads, walks, box, curb_h=0.15, wires=None, town=False, left_hand=False, speeds=None, mph=True, decks=(),
+          ground=None):
     """Rows [group, x, y, z, yaw, scale, height, rank] (trees.lua's tile rows) of the lamps and poles of a
     tile box (x0, y0, x1, y1). roads: build_tile's (fid, spec, centreline (k, 3), lon); walks: its sidewalk
     runs (dicts with fid, pts, side, w); decks: the bridge decks over the tile [(centreline (k, 3), half
-    width)]: nothing tall under them (under_decks)."""
+    width)]: nothing tall under them (under_decks). ground(x, y) gives the drawn terrain height at a prop's
+    actual position. Sidewalk props keep their slab height; roadside props and their wires follow the verge."""
     x0, y0, x1, y1 = box
     by_fid = {fid: (spec, pts) for fid, spec, pts, _ in roads}
     import fast
     others = fast.Others([(fid, spec.width / 2, pts) for fid, spec, pts, _ in roads])
     rows = []
+    ground_jobs, wire_runs = [], []
     lit = set()
     for wk in walks:
         fid = wk.get("fid")
@@ -491,9 +494,13 @@ def place(roads, walks, box, curb_h=0.15, wires=None, town=False, left_hand=Fals
             put(G_BENCH, BENCH_SPACING, _h01(fid, side, "bench") * BENCH_SPACING, w - 0.45, 0.9,
                 lambda out: _yaw(-out[0], -out[1]) + BENCH_YAW)
             put(G_BIN, BIN_SPACING, _h01(fid, side, "bin") * BIN_SPACING, 0.7, 1.1, lambda out: _yaw(-out[0], -out[1]))
-    rows.extend(junction_props(roads, box, curb_h, left_hand, decks))
+    signs = junction_props(roads, box, curb_h, left_hand, decks)
+    ground_jobs.extend((r[1], r[2], r, 3, curb_h) for r in signs)
+    rows.extend(signs)
     if speeds:
-        rows.extend(speed_signs(roads, speeds, box, left_hand, mph))
+        signs = speed_signs(roads, speeds, box, left_hand, mph)
+        ground_jobs.extend((r[1], r[2], r, 3, 0.0) for r in signs)
+        rows.extend(signs)
     for fid, spec, line, _ in roads:
         if spec.urban or fid in lit or spec.cls not in POLE_CLASSES or len(line) < 2:
             continue
@@ -511,17 +518,37 @@ def place(roads, walks, box, curb_h=0.15, wires=None, town=False, left_hand=Fals
             inside = x0 <= q[0] < x1 and y0 <= q[1] < y1
             if not _clear(np.array([q[0], q[1], p[2]]), others, fid):
                 if len(run) > 1 and wires is not None:
-                    wires.extend(_own_spans(run, box))
+                    wire_runs.append(run)
                 run = []
                 continue
             # the cross-arm (local x) across the road, the wires (local y) along it
             yaw = _yaw(n[0], n[1])
-            run.append((float(q[0]), float(q[1]), float(p[2]), yaw))
+            pole = [float(q[0]), float(q[1]), float(p[2]), yaw]
+            run.append(pole)
             if inside:
                 rows.append([G_POLE, round(float(q[0]), 2), round(float(q[1]), 2), round(float(p[2]), 2),
                              round(yaw, 1), 1.0, 9.2, 0.0])
+                r = rows[-1]
+                ground_jobs.append((r[1], r[2], r, 3, 0.0))
         if len(run) > 1 and wires is not None:
-            wires.extend(_own_spans(run, box))
+            wire_runs.append(run)
+    owned_spans = []
+    for run in wire_runs:
+        for a, b in zip(run[:-1], run[1:]):
+            if x0 <= a[0] < x1 and y0 <= a[1] < y1:
+                owned_spans.append([a, b])
+                ground_jobs.extend((p[0], p[1], p, 2, 0.0) for p in (a, b))
+    # Sample only visible props and the ends of this tile's wires. A road can span many kilometres;
+    # sending all its poles to drawn_ground would allocate a terrain grid over that entire distance.
+    if ground is not None and ground_jobs:
+        xy = np.array([(x, y) for x, y, *_ in ground_jobs], np.float64)
+        zs = np.asarray(ground(xy[:, 0], xy[:, 1]), np.float64)
+        for (_, _, target, index, lift), z in zip(ground_jobs, zs):
+            if np.isfinite(z):
+                target[index] = round(float(z + lift), 2)
+    if wires is not None:
+        for span in owned_spans:
+            wires.extend(wire_lines(span))
     return under_decks(rows, list(decks), wires)
 
 

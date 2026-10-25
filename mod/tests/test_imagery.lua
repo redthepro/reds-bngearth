@@ -379,4 +379,31 @@ do
   satmat.unref(P)
 end
 
+-- A costly pooled material rebind must obey the same budget as a queued texture reload.
+do
+  farfield.clear()
+  farfield.switchAnchor(20, false, { cx = 100000, cy = 0 })
+  local p, oldTex, newTex = 'bngEarthFar_ab12_00099', '/temp/old.dds', '/temp/new.dds'
+  satmat.create(p, oldTex, true)
+  local m = matNamed(p)
+  local reloads, charged, allow = 0, 0, false
+  m.flush = function() end
+  m.reload = function() reloads = reloads + 1; now = now + 100 end
+  local budget = { clock = clock, chargeMotion = function() end }
+  function budget:try(kind) return kind == 'retex' and allow end
+  function budget:charge(kind, ms)
+    if kind == 'retex' then charged = charged + ms; allow = false end
+  end
+  farfield.onTile(sat(20, 0, 0, 16, { material = p, texture = newTex }))
+  step(budget)
+  T.check(reloads == 0 and satmat.refs(p) == 0, 'exhausted budget postpones pooled material rebind')
+  allow = true
+  step(budget)
+  T.check(reloads == 1 and charged == 100, 'entire synchronous rebind cost is charged to governor')
+  T.check(satmat.texture(p) == newTex and satmat.refs(p) == 1, 'rebind completes once budget allows it')
+  step(budget)
+  T.check(reloads == 1, 'waiting tile import does not repeat texture reload')
+  farfield.clear()
+end
+
 T.done('test_imagery')

@@ -42,6 +42,8 @@ SEND_M = 640.0          # tiles whose square comes this close to the player (Che
 DROP_M = 960.0          # ... and dropped beyond this
 OVERLAP = 2.0           # m a road reaches past its tile's edge (no gap at tile seams)
 SIMPLIFY_M = 0.25       # RDP tolerance (Road Spline's layerMgr)
+MARK_SIMPLIFY_M = 0.02  # lane paint is only 12-15 cm wide: a 25 cm shortcut visibly facets a bend
+MARK_CURVE_M = 0.20     # maximum displacement when rounding a mapped marking's small corners
 SIMPLIFY_Z_M = 0.05     # ... and the vertical one of lines drawn at their own heights (decks, tunnels: simplify ztol)
 MAX_NODES = 100         # nodes per DecalRoad (Road Spline's chunk size)
 MAX_SPACING = 12.0      # m between nodes at most (official maps: median 11-12 m)
@@ -812,6 +814,8 @@ def _road_specs(feats, urban_fn, widths, left_hand):
             b = feats.coord_off[feats.ring_off[feats.part_off[j + 1]]]
             if _osm(feats, "width", j, *OSM_WIDTH_M) is not None:
                 continue        # (OpenStreetMap's own width)
+            if sp.lanes is not None:
+                continue        # building setbacks must not replace a mapped lane count
             m = widths(str(feats.ids[j]), feats.lonlat[a:b]) if b > a else None
             dflt = carriageway(sp.cls, sp.kind, True, None, sp.oneway, sp.lanes)
             # Historic streets can be one shared lane between close building fronts. Rejecting these measurements
@@ -852,13 +856,17 @@ def _bridge_specs(feats, want="bridge"):
             continue
         width = _rule_value(rules.get("width"), i)
         rule_w = float(width) if width is not None and 1.0 <= float(width) <= 40.0 else None
+        if rule_w is None:
+            rule_w = _osm(feats, "width", i, *OSM_WIDTH_M)
+        lanes = _osm(feats, "lanes", i, *OSM_LANES)
+        lanes = int(lanes) if lanes is not None else None
         surf = _rule_value(rules.get("surface"), i)
         kind = surface_kind(cls, surf)
         ow = _rule_value(rules.get("oneway"), i) is not None
-        if rule_w is None and _rule_value(rules.get("subclass"), i) == "link":
+        if rule_w is None and _rule_value(rules.get("subclass"), i) == "link" and lanes is None:
             rule_w = LINK_M[1] if ow else LINK_M[2]
-        out.append(Spec(carriageway(cls, kind, False, rule_w, ow), kind, False, cls, ow,
-                        surf=surface_token(surf)))
+        out.append(Spec(carriageway(cls, kind, False, rule_w, ow, lanes), kind, False, cls, ow,
+                        lanes=lanes, surf=surface_token(surf)))
     return out
 
 
@@ -1432,6 +1440,44 @@ def offset_polyline(pts, d):
     return out
 
 
+def smooth_marking(pts):
+    """Round small polyline joins before tile clipping; keep endpoints and deliberate sharp turns.
+
+    Quadratic fillets stay within MARK_CURVE_M of the source geometry. This smooths paint without
+    moving the mapped road, its collision surface, junction endpoints or bridge abutments.
+    """
+    pts = np.asarray(pts, np.float64)
+    if len(pts) < 3:
+        return pts.copy()
+    delta = np.diff(pts, axis=0)
+    length = np.linalg.norm(delta[:, :2], axis=1)
+    unit = delta / np.maximum(length[:, None], 1e-6)
+    cosine = np.clip((unit[:-1, :2] * unit[1:, :2]).sum(1), -1.0, 1.0)
+    corners = np.flatnonzero((length[:-1] >= 1e-6) & (length[1:] >= 1e-6)
+                             & (cosine >= 0.5) & (cosine <= 0.999999)) + 1
+    if not len(corners):
+        return pts.copy()
+    out, cursor = [], 0
+    for i in corners:
+        p = pts[i]
+        la, lb = length[i - 1:i + 1]
+        u, v = unit[i - 1:i + 1]
+        cut = min(0.45 * la, 0.45 * lb, 6.0, 2 * MARK_CURVE_M / math.sqrt((1 - cosine[i - 1]) / 2))
+        start, end = p - cut * u, p + cut * v
+        t = np.linspace(0.0, 1.0, max(4, int(math.ceil(2 * cut / 0.5))) + 1)[:, None]
+        out.append(pts[cursor:i])
+        out.append((1 - t) ** 2 * start + 2 * (1 - t) * t * p + t ** 2 * end)
+        cursor = i + 1
+    out.append(pts[cursor:])
+    return np.concatenate(out)
+
+
+def render_nodes(pts, look, ztol=None):
+    """Keep paint's finer curve detail through chunk simplification."""
+    tol = MARK_SIMPLIFY_M if look["m"].startswith("line_") else SIMPLIFY_M
+    return densify(simplify(pts, tol=tol, ztol=ztol))
+
+
 def _seg_dist(p, a, b):
     """Distance from points p (N, 2) to segments a-b (M, 2): (N, M)."""
     ab = b - a
@@ -1627,7 +1673,8 @@ def extras(spec, pts, lon, left_hand=False):
         for side in (1, -1):
             inset = motorway_shoulder(spec) if rural_motorway(spec) else EDGE_LINE["inset"]
             out.append((EDGE_LINE, EDGE_LINE["w"], offset_polyline(pts, side * (w / 2 - inset))))
-    return out
+    return [(look, width, smooth_marking(line) if look["m"].startswith("line_") else line)
+            for look, width, line in out]
 
 
 JOIN_GAP_M = 14.0       # sidewalk ends this close (and facing each other) are joined: a sharp corner / road merge
@@ -3400,7 +3447,7 @@ def _tunnel_chunks(tunnels, cells, exact, terrain_paint=True):
                     (lk, w2, ln) for lk, w2, ln in extras(spec, pts, lon)
                     if lk["m"] != SIDEWALK["m"] and lk["m"] != GUTTER["m"]]:
                 for piece in clip_polyline(line, *exact):
-                    for c in split(densify(simplify(piece))):
+                    for c in split(render_nodes(piece, look)):
                         if len(c) >= 2:
                             # on the ground as any road (the grading lays the ground at its floor, Grader._open_tunnels:
                             # at the floor's own heights the ground graded from the grader's profile covered it
@@ -3426,7 +3473,7 @@ def _tunnel_chunks(tunnels, cells, exact, terrain_paint=True):
     for fid, ends, lines in jobs:
         for look, w, line in lines:
             for piece in clip_polyline(line, *exact):
-                for c in split(densify(simplify(piece, ztol=SIMPLIFY_Z_M))):
+                for c in split(render_nodes(piece, look, ztol=SIMPLIFY_Z_M)):
                     if len(c) >= 2:
                         ch = _chunk(look, w, c)
                         ch["fixed"] = True
@@ -3545,7 +3592,7 @@ def _deck_chunks(decks, exact):
                 lines.append((look, w, line))
         for look, w, line in lines:
             for piece in clip_polyline(line, *exact):
-                for c in split(densify(simplify(piece, ztol=SIMPLIFY_Z_M))):
+                for c in split(render_nodes(piece, look, ztol=SIMPLIFY_Z_M)):
                     if len(c) >= 2:
                         ch = _chunk(look, w, c)
                         ch["fixed"] = True
@@ -3769,7 +3816,7 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
                 pieces = clip_polyline(line, *box)
             for piece in pieces:
                 for run in cut_outside(piece, wb if walk else blockers, 0.5 if walk else 2.0):
-                    for c in split(densify(simplify(run))):
+                    for c in split(render_nodes(run, look)):
                         if len(c) >= 2:
                             chunks.append(_chunk(look, w, c))
     if walks is not None:
@@ -3802,9 +3849,16 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
         import navgraph
         speeds = {fid: navgraph.road_mph(f, i, sp, mph) for fid, (f, i, sp) in seen.items()}
         decks = [(np.asarray(ch["n"], np.float64), ch["w"] / 2) for ch in chunks if ch.get("deck")]
+
+        def prop_ground(x, y):
+            if ground is not None:
+                return ground(x, y)
+            la, lo, _ = frame.enu_to_geodetic(x, y, 0.0)
+            return frame.geodetic_to_enu(la, lo, np.asarray(elev(la, lo), np.float64))[2]
+
         props.extend(furniture.place(roads, walks, (x0, y0, x1, y1), wires=wires, town=bool(town), left_hand=left_hand,
                                      speeds={k: v for k, v in speeds.items() if v is not None}, mph=mph,
-                                     decks=decks))
+                                     decks=decks, ground=prop_ground))
     if park is not None and walks is not None:      # curbside parking spots (parking.py)
         import parking
         dirs = {}

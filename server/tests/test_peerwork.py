@@ -1,6 +1,7 @@
 """peerwork.py: compute sharing's wire format (no pickle), the job checks, the Built round trip, and a requester using
 a helper (and building locally when the helper is gone or of another code)."""
 import socket
+import os
 import tempfile
 from unittest import mock
 import sys
@@ -133,18 +134,22 @@ class FakeHelper:
 
     def conn(self, s):
         try:
-            h, _ = peerwork.recv_msg(s)
-            peerwork.send_msg(s, {"ok": h.get("code") == self.code, "workers": 2, "code": self.code})
+            channel = peerwork.peerauth.server(s, "a" * 64, {"protocol": peerwork.PROTOCOL, "workers": 2, "code": self.code})
             while True:
-                h, _ = peerwork.recv_msg(s)
+                h, _ = channel.receive()
                 self.jobs.append(h["tile"])
                 d, blobs = peerwork.built_msg(built(len(self.jobs)))
-                peerwork.send_msg(s, {"ok": True, "built": d}, blobs)
+                channel.send({"ok": True, "built": d}, blobs)
         except (ConnectionError, OSError, ValueError):
             pass
 
 
 class PoolTest(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.dict(os.environ, {"BNGE_PEER_TOKEN": "a" * 64})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def args(self, i):
         return (1, 39.28, -76.59, farfield.Tile(1, i, 0), 13, None, 14, True, farfield.Layout(64))
 
@@ -199,7 +204,7 @@ class GroupTest(unittest.TestCase):
             pools.append((name, local, pool, port))
         members = [(n, "127.0.0.1", port) for n, _, _, port in pools]
         for n, _, pool, _ in pools:
-            pool.set_group(n, members)
+            pool.set_group(n, members, tokens={name: p.session_token for name, _, p, _ in pools})
         self.assertEqual(pools[0][2].remote_slots(), peerwork.GROUP_CONNS)
         args = [(1, 39.28, -76.59, farfield.Tile(1, i, 0), 13, None, 14, True, farfield.Layout(64)) for i in range(12)]
         futs = [pool.submit(far_geometry, *a) for _, _, pool, _ in pools for a in args]
@@ -227,8 +232,8 @@ class GroupTest(unittest.TestCase):
         for a in args:                       # alone first: everything built and kept
             old.submit(far_geometry, *a).result(10)
         members = [(n, "127.0.0.1", port) for n, _, _, port in pools]
-        old.set_group("old", members)
-        new.set_group("new", members)
+        old.set_group("old", members, tokens={name: p.session_token for name, _, p, _ in pools})
+        new.set_group("new", members, tokens={name: p.session_token for name, _, p, _ in pools})
         out = [new.submit(far_geometry, *a).result(20) for a in args]
         self.assertTrue(all(isinstance(o, farfield.Built) for o in out))
         self.assertEqual(pools[1][1].built, [], "the newcomer built nothing: all from the player there before")
@@ -254,7 +259,8 @@ class GroupTest(unittest.TestCase):
         s.bind(("127.0.0.1", 0))
         dead = s.getsockname()[1]
         s.close()
-        pool.set_group("a", [("a", "127.0.0.1", 1), ("b", "127.0.0.1", dead)])
+        pool.set_group("a", [("a", "127.0.0.1", 1), ("b", "127.0.0.1", dead)],
+                       tokens={"a": pool.session_token, "b": "b" * 64})
         args = [(1, 39.28, -76.59, farfield.Tile(1, i, 0), 13, None, 14, True, farfield.Layout(64)) for i in range(8)]
         out = [pool.submit(far_geometry, *a).result(20) for a in args]
         self.assertTrue(all(isinstance(o, farfield.Built) for o in out))

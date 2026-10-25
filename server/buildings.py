@@ -192,7 +192,7 @@ TOWER_SHOP_FLOORS = 6       # a building this tall in a dense core: a shop / lob
 SHOP_CLASSES = {"retail", "commercial", "supermarket", "kiosk", "office", "hotel", "civic", "restaurant"}
 HOUSE_CLASSES = {"house", "detached", "semidetached_house", "bungalow", "residential", "farm", "static_caravan",
                  "cabin", "dormitory"}
-ROW_CLASSES = {"terrace"}
+ROW_CLASSES = {"terrace", "terraced_house", "townhouse", "row_house"}
 GARAGE_MIN_M2 = 400.0       # a "parking" building this big is a parking structure
 INDUSTRIAL_CLASSES = {"industrial", "warehouse", "manufacture", "factory", "hangar"}
 
@@ -473,6 +473,10 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
     # in a dense core small buildings are row houses even where the footprints leave gaps (Fells Point)
     row = cls in ROW_CLASSES or (not west_town and ((narrow and (neighbours >= 1 or dense)) or (
         dense and area < 260 and cls not in SHOP_CLASSES)))
+    # Explicit residential terraces in eastern US suburbs (including NOVA) are usually low-rise,
+    # pitched-roof townhouses. Keep the dense historic-core style and mapped roofs/heights authoritative.
+    suburban_row = (cls in ROW_CLASSES and not dense and lat is not None and lon is not None
+                    and 25 <= lat <= 50 and -100 <= lon <= -66)
     shed = (cls in SHED_CLASSES and not garage) or (area < 40 and not row)
     shop = cls in SHOP_CLASSES
     industrial = cls in INDUSTRIAL_CLASSES or (area > 2500 and cls in ("", "commercial"))
@@ -538,7 +542,7 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
         if shed:
             nf = 1
         elif row:
-            nf = 2 if seed < 0.25 else (3 if seed < 0.85 else 4)
+            nf = (2 if seed < 0.4 else 3) if suburban_row else (2 if seed < 0.25 else (3 if seed < 0.85 else 4))
         elif west_town and not industrial and cls != "apartments":
             # Bishop's and Moab's photos (2026-10-14): one-storey shops with false fronts, ranch houses
             nf = 1 if seed < WEST_TOWN_ONE_STOREY else 2
@@ -564,6 +568,8 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
     else:
         detached_house = (cls in HOUSE_CLASSES or (area < 260 and not shop)) and not industrial and not row
         if church and neighbours == 0:
+            roof = "gabled"
+        elif suburban_row and (nf or (h or 0) / FLOOR_M or 3) <= 4:
             roof = "gabled"
         elif neighbours >= 1:
             # attached: flat in the US (a pitched roof would show its gable to the neighbour); old European towns

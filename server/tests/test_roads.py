@@ -874,8 +874,16 @@ class TrackerTest(unittest.TestCase):
 
             async def go(view, n=60):
                 loop = asyncio.get_running_loop()
+                submit = loop.run_in_executor
+
+                def record(executor, build, aid, tx, ty):
+                    # Priority determines submission, not OS thread-start order.
+                    built.append((tx, ty))
+                    return submit(executor, build, aid, tx, ty)
+
+                loop.run_in_executor = record
                 for _ in range(n):
-                    tr.on_pose(conn, 1, 0.0, 0.0, loop, lambda aid, tx, ty: (built.append((tx, ty)), (f"/p/{tx}_{ty}", 1))[1],
+                    tr.on_pose(conn, 1, 0.0, 0.0, loop, lambda aid, tx, ty: (f"/p/{tx}_{ty}", 1),
                                view=view)
                     await asyncio.sleep(0.01)
             send = roads.SEND_M if kind == "roads" else vegetation.SEND_M
@@ -899,8 +907,16 @@ class TrackerTest(unittest.TestCase):
 
             async def go(foci, n=60):
                 loop = asyncio.get_running_loop()
+                submit = loop.run_in_executor
+
+                def record(executor, build, aid, tx, ty):
+                    # Check submission priority, not the OS's thread-start order.
+                    built.append((tx, ty))
+                    return submit(executor, build, aid, tx, ty)
+
+                loop.run_in_executor = record
                 for _ in range(n):
-                    tr.on_pose(conn, 1, 0.0, 0.0, loop, lambda aid, tx, ty: (built.append((tx, ty)), (f"/p/{tx}_{ty}", 1))[1],
+                    tr.on_pose(conn, 1, 0.0, 0.0, loop, lambda aid, tx, ty: (f"/p/{tx}_{ty}", 1),
                                foci=foci)
                     await asyncio.sleep(0.01)
             send = roads.SEND_M if kind == "roads" else vegetation.SEND_M

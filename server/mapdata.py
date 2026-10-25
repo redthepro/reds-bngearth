@@ -306,10 +306,18 @@ class MapData:
         except Exception as e:      # zipfile.BadZipFile, zlib.error, ValueError, EOFError, OSError...
             log.warning("mapdata: unreadable %s (%s: %s): rebuilding it", path, type(e).__name__, e)
             return None
-        if "provenance" not in arrays:
-            log.warning("mapdata: %s has no provenance record: rebuilding it", path)
+        if not self._valid_provenance(arrays):
+            log.warning("mapdata: %s has invalid provenance: rebuilding it", path)
             return None
         return arrays
+
+    @staticmethod
+    def _valid_provenance(arrays):
+        try:
+            value = json.loads(str(arrays["provenance"]))
+            return value is None or isinstance(value, dict)
+        except (KeyError, ValueError, TypeError):
+            return False
 
     def _store(self, path, arrays):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -438,6 +446,8 @@ class MapData:
                 big = os.path.getsize(f) > MIRROR_SMALL
                 a = np.load(f, mmap_mode="r" if big else None, allow_pickle=False)
                 out[n] = np.asarray(a)          # (a plain view of the mapping: np.memmap's Python hooks ran on every slice)
+            if not self._valid_provenance(out):
+                return None                    # a valid .npy header can still have a zeroed string payload
             os.utime(os.path.join(d, "ok"))         # (read: the last to go)
             return out
         except (OSError, ValueError, EOFError):

@@ -26,6 +26,7 @@ LAT, LON = 36.5785, -118.2923       # Mt Whitney summit, 4421 m
 CACHE = os.path.join(tempfile.gettempdir(), "beamng-earth-test-cache")
 
 
+@unittest.skipIf(os.environ.get("BNGE_TEST_OFFLINE") == "1", "live map downloads disabled")
 class EndToEndTest(unittest.TestCase):
     """The v1.2 behaviour: terrain near-visual mode, imagery off."""
     args = ["--near-visual", "terrain", "--imagery", "off"]

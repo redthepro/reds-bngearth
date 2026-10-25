@@ -33,7 +33,7 @@ import roads as roadsmod
 
 log = logging.getLogger("earthd.grading")
 
-VERSION = 2
+VERSION = 3
 PROFILE_STEP = 2.0          # m between profile samples
 SIGMA_M = 12.0              # m, profile smoothing of built roads
 DIRT_SIGMA_M = 5.0          # m, profile smoothing of gravel / dirt roads
@@ -142,6 +142,26 @@ def smooth_profile(z, step, sigma):
     import fast
     fast.require(0, "smooth_profile")       # the Rust loop (~7000 roads a 9-tile set)
     return fast._ef.smooth_profile(np.ascontiguousarray(z, np.float64), float(step), float(sigma))
+
+
+def road_profile(z, step, sigma):
+    """Smooth bumps without flattening grades or separating shared road endpoints.
+
+    Reflecting a sloping road at either end lifts its start and lowers its end. Adjacent
+    segments then disagree even on a constant grade. Smooth the residual from the end-to-end
+    slope instead, and taper any remaining endpoint correction into the interior.
+    """
+    z = np.asarray(z, np.float64)
+    if len(z) < 3 or sigma <= 0:
+        return z.copy()
+    trend = np.linspace(z[0], z[-1], len(z))
+    sm = smooth_profile(z - trend, step, sigma) + trend
+    reach = min(3.0 * sigma, (len(z) - 1) * step / 2)
+    t = np.minimum(np.arange(len(z)) * step / reach, 1.0)
+    weight = 0.5 * (1.0 + np.cos(np.pi * t))
+    sm += (z[0] - sm[0]) * weight + (z[-1] - sm[-1]) * weight[::-1]
+    sm[0], sm[-1] = z[0], z[-1]
+    return sm
 
 
 def resample(xy, step):
@@ -332,7 +352,7 @@ def _add_cuts(frame, plans, elev):
 
 def _plan(xy, z, spec, abut=(False, False)):
     built = spec.kind in roadsmod.BUILT
-    zs = smooth_profile(z, PROFILE_STEP, SIGMA_M if built else DIRT_SIGMA_M)
+    zs = road_profile(z, PROFILE_STEP, SIGMA_M if built else DIRT_SIGMA_M)
     # thin to VERTEX_STEP (the profile stays smooth between: linear in the grading pass)
     every = max(1, int(round(VERTEX_STEP / PROFILE_STEP)))
     keep = np.r_[np.arange(0, len(xy) - 1, every), len(xy) - 1]

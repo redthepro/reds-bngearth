@@ -2,6 +2,7 @@
 deterministic; tiles of items in the anchor frame."""
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +15,30 @@ import vegetation as veg  # noqa: E402
 
 LAT, LON = 39.29, -76.58
 KEY = mapcells.cell_of(LAT, LON)
+
+
+class RecoveryTest(unittest.TestCase):
+    def test_failed_cell_backs_off_and_recovers(self):
+        v = veg.Vegetation(None)
+        v._warm_thread = object()  # inspect the queue without starting a worker
+        result = object()
+        with mock.patch.object(v, "_load", side_effect=[ValueError("damaged"), result]) as load, \
+                mock.patch.object(veg.time, "monotonic", return_value=100.0) as clock:
+            with self.assertRaises(ValueError):
+                v.cell(KEY)
+            for _ in range(50):
+                with self.assertRaises(RuntimeError):
+                    v.cell(KEY)
+                v.warm_around(*KEY.center(), radius_m=1)
+            self.assertEqual(load.call_count, 1)
+            self.assertEqual(v._warm, [])
+            clock.return_value = 131.0
+            v.warm_around(*KEY.center(), radius_m=1)
+            self.assertIn((KEY.x, KEY.y), v._warm)
+            self.assertIs(v.cell(KEY), result)
+            self.assertFalse(v._failed)
+            self.assertIs(v.cell(KEY), result)
+            self.assertEqual(load.call_count, 2)
 
 
 class Raster:

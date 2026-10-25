@@ -20,6 +20,7 @@ import logging
 import math
 import os
 import threading
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
 
@@ -176,6 +177,7 @@ class Vegetation:
         self._mem = OrderedDict()
         self._lock = threading.Lock()
         self._cell_locks = {}
+        self._failed = OrderedDict()    # cell -> (retry time, message); avoid a bad source busy-looping
         self._warm, self._warm_thread = [], None
         self._warm_cv = threading.Condition()
 
@@ -191,8 +193,20 @@ class Vegetation:
             with self._lock:
                 if k in self._mem:
                     return self._mem[k]
-            items = self._load(*k)
+                failed = self._failed.get(k)
+                if failed and time.monotonic() < failed[0]:
+                    raise RuntimeError(f"vegetation cell {k} waiting to retry: {failed[1]}")
+            try:
+                items = self._load(*k)
+            except Exception as e:
+                with self._lock:
+                    self._failed[k] = (time.monotonic() + 30.0, str(e))
+                    self._failed.move_to_end(k)
+                    while len(self._failed) > MEM_CELLS:
+                        self._failed.popitem(last=False)
+                raise
             with self._lock:
+                self._failed.pop(k, None)
                 self._mem[k] = items
                 while len(self._mem) > MEM_CELLS:
                     self._mem.popitem(last=False)
@@ -211,6 +225,10 @@ class Vegetation:
         with self._warm_cv:
             for k in keys:
                 kk = (int(k.x), int(k.y))
+                with self._lock:
+                    failed = self._failed.get(kk)
+                    if failed and time.monotonic() < failed[0]:
+                        continue
                 if kk not in self._warm and not self.ready(k):
                     self._warm.append(kk)
             if self._warm_thread is None:

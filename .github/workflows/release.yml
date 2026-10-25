@@ -1,7 +1,7 @@
 # The player downloads: BeamNG.Earth-<VERSION>-x86_64.AppImage (Linux) and BeamNG.Earth-<VERSION>.exe (Windows),
 # each the launcher (launcher.py: the mod, the world server, the game started for you) with Python inside.
-# A push to main whose VERSION has no release yet builds both and publishes the release v<VERSION> (a pre-release
-# when the version says "preview"); "Run workflow" builds them as artifacts only (or releases with release: true).
+# Every push to main tests, builds and publishes a unique commit build, without a VERSION bump.
+# Manual runs build artifacts only unless publication is explicitly selected.
 name: release
 
 on:
@@ -10,49 +10,52 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: "Publish the release v<VERSION> (when it does not exist yet)"
+        description: "Publish this commit build as a GitHub release"
         type: boolean
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  # A branch-wide group silently replaces pending pushes. Each run must get its own build.
+  group: release-${{ github.run_id }}
   cancel-in-progress: false
 
 jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+    permissions:
+      contents: read
+
   check:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
-      build: ${{ steps.v.outputs.build }}
       publish: ${{ steps.v.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
       - id: v
         env:
-          GH_TOKEN: ${{ github.token }}
+          PUBLISH: ${{ github.event_name == 'push' || inputs.release }}
         run: |
-          v=$(tr -d '[:space:]' < VERSION)
+          base=$(tr -d '[:space:]' < VERSION)
+          [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || exit 1
+          v="$base-build.$GITHUB_RUN_NUMBER.g${GITHUB_SHA:0:12}"
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          if gh release view "v$v" >/dev/null 2>&1; then exists=1; else exists=0; fi
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "build=true" >> "$GITHUB_OUTPUT"
-            [ "${{ inputs.release }}" = "true" ] && [ $exists = 0 ] && pub=true || pub=false
-          else
-            [ $exists = 0 ] && pub=true || pub=false
-            echo "build=$pub" >> "$GITHUB_OUTPUT"
-          fi
-          echo "publish=$pub" >> "$GITHUB_OUTPUT"
-          echo "VERSION $v, release exists: $exists, publish: $pub"
+          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+          echo "Build $v from $GITHUB_SHA, publish: $PUBLISH"
 
   linux:
-    needs: check
-    if: needs.check.outputs.build == 'true'
+    needs: [check, tests]
     runs-on: ubuntu-22.04          # an older glibc: the AppImage runs on more distributions
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - name: Embed commit build version
+        env:
+          BUILD_VERSION: ${{ needs.check.outputs.version }}
+        run: printf '%s\n' "$BUILD_VERSION" > VERSION
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -69,6 +72,13 @@ jobs:
           mv appimagetool appimagetool.AppImage
       - name: Build the AppImage
         run: python tools/build_app.py --appimagetool "$PWD/appimagetool.AppImage"
+      - name: Package the matching BeamMP plugin and mod
+        run: python tools/package.py --beammp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beammp
+          path: dist/BeamNG.Earth-BeamMP-Server-*.zip
+          if-no-files-found: error
       - name: Smoke test (the packaged server starts and answers --help)
         run: |
           f=$(ls dist/*.AppImage)
@@ -80,11 +90,15 @@ jobs:
           if-no-files-found: error
 
   windows:
-    needs: check
-    if: needs.check.outputs.build == 'true'
+    needs: [check, tests]
     runs-on: windows-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - name: Embed commit build version
+        env:
+          BUILD_VERSION: ${{ needs.check.outputs.version }}
+        run: Set-Content -LiteralPath VERSION -Value $env:BUILD_VERSION -Encoding utf8NoBOM
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -110,9 +124,12 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [check, linux, windows]
+    needs: [check, tests, linux, windows]
     if: needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -121,8 +138,14 @@ jobs:
       - name: Publish v${{ needs.check.outputs.version }}
         env:
           GH_TOKEN: ${{ github.token }}
+          BUILD_VERSION: ${{ needs.check.outputs.version }}
         run: |
-          v=${{ needs.check.outputs.version }}
+          v="$BUILD_VERSION"
+          # Re-running a successful workflow never overwrites a published binary.
+          if gh release view "v$v" >/dev/null 2>&1; then
+            echo "Release v$v already published"
+            exit 0
+          fi
           pre=""
           case "$v" in *preview*|*alpha*|*rc*) pre="--prerelease";; esac     # betas are full releases (the user, 2026-10-22)
           cat > notes.md <<EOF
@@ -134,6 +157,16 @@ jobs:
             \`chmod +x\`). It starts the native game with the grass patch, no Steam launch options needed.
 
           Steam must be running. Closing the game stops the server. See the README for details.
+
+          Built from commit $GITHUB_SHA by workflow run $GITHUB_RUN_NUMBER.
           EOF
-          gh release create "v$v" out/linux/* out/windows/* --target "$GITHUB_SHA" --title "BeamNG.Earth $v" \
-            --notes-file notes.md --generate-notes $pre
+          for platform in linux windows beammp; do
+            (cd "out/$platform" && sha256sum *)
+          done > SHA256SUMS.txt
+          gh release create "v$v" out/linux/* out/windows/* out/beammp/* --target "$GITHUB_SHA" --title "BeamNG.Earth $v" \
+            --notes-file notes.md --generate-notes --latest=false $pre SHA256SUMS.txt
+          # A slower older run (or a manual branch build) must not replace the newest main build.
+          head=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$head" = "$GITHUB_SHA" ] && [ -z "$pre" ]; then
+            gh release edit "v$v" --latest
+          fi

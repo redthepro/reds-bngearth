@@ -114,6 +114,17 @@ class ServerTest(unittest.TestCase):
         with open(slot, "rb") as fh:
             self.assertEqual(fh.read(), b"head" + name.encode() + b"tail")
 
+    def test_repeated_reslot_uses_original_shape_material(self):
+        ck, original = self.add("0_0_0")
+        for i in range(4):
+            self.s.matslots.release(ck)
+            self.s.matslots.take((2, f"0_{i}_0"))  # occupy the old slot
+            info = self.s.reslot(ck, self.s.tiles[ck])
+            self.assertNotEqual(info.material, original)
+            with open(os.path.join(self.s.out_dir, info.shape), "rb") as fh:
+                self.assertEqual(fh.read(), b"head" + info.material.encode() + b"tail")
+        self.assertEqual(info.source_material, original)
+
     def test_place_is_a_link_or_copy(self):
         src = os.path.join(self.s.out_dir, "a.cdae")
         dst = os.path.join(self.s.out_dir, "slot_00001.cdae")

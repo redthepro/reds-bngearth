@@ -1,2 +1,11 @@
-*.bat text eol=crlf
+* text=auto
+.gitattributes text eol=lf
+UPDATE_REPO text eol=lf
+*.py text eol=lf
+*.lua text eol=lf
+*.rs text eol=lf
+*.yml text eol=lf
 *.sh text eol=lf
+*.bat text eol=crlf
+*.pyd binary
+*.so binary

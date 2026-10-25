@@ -77,6 +77,19 @@ class PickTest(unittest.TestCase):
 
 
 class DownloadTest(unittest.TestCase):
+    def test_disabled_channel_never_downloads_or_hands_over(self):
+        with mock.patch.object(selfupdate.updates, "REPO", ""), mock.patch("urllib.request.urlopen") as fetch:
+            with self.assertRaisesRegex(selfupdate.UpdateError, "disabled"):
+                selfupdate.download(FakeNet(), "1.0.0", self.me)
+            self.assertIsNone(selfupdate.staged("1.0.0", self.me))
+            fetch.assert_not_called()
+
+    def test_staged_update_cannot_cross_repository(self):
+        with mock.patch("urllib.request.urlopen", opener(release())):
+            selfupdate.download(FakeNet(), "1.5.5-beta", self.me)
+        with mock.patch.object(selfupdate.updates, "REPO", "different/fork"):
+            self.assertIsNone(selfupdate.staged("1.5.5-beta", self.me))
+
     def setUp(self):
         self.dir = tempfile.mkdtemp()
         self.me = os.path.join(self.dir, "BeamNG.Earth-1.5.5-beta.exe")

@@ -659,6 +659,7 @@ local function onMessage(msg)
     trees.clear()
     setStatus('Disconnected from companion server: ' .. tostring(msg.error))
   elseif t == 'hello' then
+    pcall(mpsession.onServerHello)
     st.sessionId = msg.sessionId
     roads.setSession(msg.sessionId)   -- the road / building tiles' pooled shape files belong to this server
     lastHello = {}           -- the server's version and options, for the reports' hardware.json

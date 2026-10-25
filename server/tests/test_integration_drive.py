@@ -1527,6 +1527,13 @@ class FollowDrive512Test(unittest.TestCase):
         self.assertEqual((r["fast_frames"], r["rebases"]), (0, 1))
         self.assertGreater(r["commits"], 5)
 
+    def test_200mph_with_slow_heightmaps(self):
+        # Real server + replayed client follow rules; does not model GPU/rendering frame times.
+        r = self.run_follow(200 * 0.44704, 20.0, 3500.0, terrain_delay=1.2)
+        self.assertGreater(r["edge_min"], 0.0, r["edge_at"])
+        self.assertEqual(r["rebases"], 1)
+        self.assertGreater(r["commits"], 5)
+
     def test_200_fast_mode_slow_heightmaps(self):
         r = self.run_follow(200.0, 10.0, 3500.0, terrain_delay=1.2)
         self.assertGreaterEqual(r["edge_min"], modsim.FOLLOW["EDGE_MARGIN_FAST"], r["edge_at"])

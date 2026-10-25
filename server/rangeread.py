@@ -170,6 +170,23 @@ class RemoteFile:
     def _remember(self, i, b):
         _mem_put((self._key, i), b)
 
+    def invalidate(self, start, end):
+        """Discard only blocks covering a payload that failed decoding, so one retry can repair it.
+
+        Length checks cannot detect same-size damaged cache files. Drop both cache tiers; a fresh
+        HTTP range still goes through the normal deduplication, rate limits and validation.
+        """
+        global _mem_used
+        for i in range(start // self.block, (end + self.block - 1) // self.block):
+            with _mem_lock:
+                old = _mem.pop((self._key, i), None)
+                if old is not None:
+                    _mem_used -= len(old)
+            try:
+                os.remove(self._path(i))
+            except FileNotFoundError:
+                pass
+
     def _block_len(self, i):
         return max(0, min(self.block, self.size - i * self.block))
 

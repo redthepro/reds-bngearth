@@ -386,9 +386,15 @@ function M.adoptAnchor(lat, lon)
 end
 
 -- Our world server's group service is up (core: the "share" answer): { port, code }.
+function M.onServerHello()
+  -- A restarted/reconnected companion has revoked its old sharing session.
+  share, poseIn = nil, 0
+end
+
 function M.onShare(msg)
   local port = tonumber(msg.port)
-  share = port and { port = port, code = tostring(msg.code or ''), weight = tonumber(msg.weight) } or false
+  share = port and { port = port, code = tostring(msg.code or ''), weight = tonumber(msg.weight), token = msg.token } or false
+  poseIn = 0
   log('I', 'beamngEarth', 'BeamMP: sharing generation on port ' .. tostring(port))
 end
 
@@ -570,7 +576,8 @@ function M.update(dt, anchor, player)
     end
     TriggerServerEvent('bngePose', jsonEncode({ v = M.PROTO, aLat = anchor.lat, aLon = anchor.lon, lat = lat,
       lon = lon, joined = joined, h = h and math.floor(h * 10 + 0.5) / 10 or nil,
-      sp = share and share.port or nil, sc = share and share.code or nil, sw = share and share.weight or nil }))
+      sp = share and share.port or nil, sc = share and share.code or nil, sw = share and share.weight or nil,
+      st = share and share.token or nil }))
     stats.poses = stats.poses + 1
     if joined then log('I', 'beamngEarth', string.format('BeamMP: first pose sent (%.5f, %.5f)', lat, lon)) end
     joined = false
@@ -638,6 +645,7 @@ end
 
 -- The session's end (BeamMP left, the level's end): the deactivated cars back on, everything forgotten.
 function M.reset()
+  if share ~= nil then require('beamngEarth/net').send({ type = 'share_stop' }) end
   for gid in pairs(deactivated) do
     local veh = vehicle(gid)
     if veh then veh:setActive(1) end

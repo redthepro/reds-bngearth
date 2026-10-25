@@ -1,0 +1,54 @@
+name: tests
+
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      BNGE_TEST_OFFLINE: "1"
+      BNGE_SKIP_DRIVE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Python dependencies
+        run: python -m pip install -r server/requirements.txt lupa
+      - name: LuaJIT (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Build native kernels from the tested sources
+        run: python tools/build_native.py
+      - name: Python regression suite
+        run: python tools/run_tests.py --par 2 --timeout 1500
+      - name: Lua regression suite
+        if: ${{ !cancelled() }}
+        run: python tools/run_lua_tests.py
+      - name: 200 mph terrain coverage with delayed loading
+        env:
+          BNGE_SKIP_DRIVE: "0"
+        run: python -m unittest discover -s server/tests -p test_integration_drive.py -k test_200mph_with_slow_heightmaps -v
+      - name: Map math
+        if: ${{ !cancelled() }}
+        run: |
+          node server/tests/test_mapmath.mjs
+          node mod/tests/test_mapmath.mjs
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: test-logs-${{ matrix.os }}
+          path: build/test-logs/*.log
