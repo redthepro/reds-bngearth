@@ -155,7 +155,7 @@ def compute(server_dir):
                                   _h(",".join(t.key for t in c.queue[:64]).encode()),
                                   # The loading HUD was added after M1; its counters are checked by
                                   # test_server.LoadProgressTest, independently of tile scheduling.
-                                  _h(json.dumps([m for m in w.msgs[n0:] if m["type"] != "load_progress"],
+                                  _h(json.dumps([m for m in w.msgs[n0:] if m.get("type") != "load_progress"],
                                                 sort_keys=True).encode())])
             out["drive"] = trace
             out["predict"] = [list(earthd.predict_request(px, py, vx, vy, cx, cy))

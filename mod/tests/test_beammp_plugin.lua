@@ -93,4 +93,27 @@ for _, event in ipairs(events) do
   if event[1] == 7 and event[2] == 'bngePeers' then revoked = #event[3].members == 0 end
 end
 T.check(revoked and wired.sentPeers[7] == nil, 'stale group explicitly revoked')
+
+-- the BeamNG.Earth server list: ServerConfig.toml read, what is announced, the background curl
+local cfg = G.readConfig('[General]\nName = "Earth # one" # comment\nPort = 30814\nMaxPlayers = 8  # max\nPrivate = true\n')
+T.check(cfg.name == 'Earth # one' and cfg.port == 30814 and cfg.maxPlayers == 8 and cfg.private == true,
+  'readConfig: name, port, cap, private (comments left out)')
+local zeros = '00000000-0000-0000-0000-000000000000'
+local key = '3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b'
+T.check(G.validKey(key) and not G.validKey(zeros) and not G.validKey('') and not G.validKey(nil) and not G.validKey('abc'),
+  'validKey: a key, not the placeholder or junk')
+T.check(G.readConfig('AuthKey = "' .. key .. '"').authKey == key, 'readConfig: the key')
+T.check(G.listable({ private = false, authKey = key }), 'listable: public with a key')
+T.check(not G.listable({ private = true, authKey = key }), 'listable: Private = true: direct connect only')
+T.check(not G.listable({ private = false, authKey = zeros }), 'listable: no key: direct connect only')
+G.LISTED = false
+T.check(not G.listable({ private = false, authKey = key }), 'listable: G.LISTED = false')
+G.LISTED = true
+local a = G.announcement(cfg, { [1] = { lat = 36.61, lon = -118.17, joinedAt = 5 }, [2] = { lat = 50, lon = 8, joinedAt = 9 } })
+T.check(a.port == 30814 and a.players == 2 and a.maxPlayers == 8 and a.place == '36.6, -118.2', 'announcement: from the longest-joined player')
+T.check(G.announcement(cfg, {}).place == nil and G.announcement(cfg, {}).players == 0, 'announcement: no one on')
+T.check(G.announceCmd('http://x/announce', 'f.json', false):match('^curl .* @f%.json "http://x/announce" >/dev/null 2>&1 &$') ~= nil,
+  'announceCmd: Linux, in the background')
+T.check(G.announceCmd('http://x/announce', 'f.json', true):match('^start "" /b curl .* >NUL 2>&1$') ~= nil, 'announceCmd: Windows, in the background')
+
 T.done('test_beammp_plugin')

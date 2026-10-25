@@ -33,6 +33,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y luajit
       - name: Build native kernels from the tested sources
         run: python tools/build_native.py
+      - name: Server list service regression tests
+        run: cargo test --manifest-path native/serverlist/Cargo.toml --locked
       - name: Python regression suite
         run: python tools/run_tests.py --par 2 --timeout 1500
       - name: Lua regression suite
