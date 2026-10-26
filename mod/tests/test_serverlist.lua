@@ -19,6 +19,14 @@ sl.onList({ type = 'server_list', servers = {
 local st = sl.state()
 T.check(st.state == 'done' and #st.servers == 2 and st.servers[1].name == 'A' and st.servers[2].port == 30815
   and st.servers[2].players == 0, 'the answer: valid entries only, fields made safe')
+T.check(not st.servers[1].official and not st.servers[2].official, 'not official')
+-- the official server by its address, not its name
+local addr = next(sl.OFFICIAL)
+local oip, oport = addr:match('^(.*):(%d+)$')
+local o = sl.toServers({ { ip = oip, port = tonumber(oport), name = 'x' }, { ip = '1.1.1.1', port = 1, name = 'Official BeamNG.Earth' } })
+T.check(o[1].official == true and o[2].official == false, 'official by address only')
+local loc = sl.toServers({ { ip = 'a', port = 1, location = 'de' }, { ip = 'b', port = 1, location = '<img>' }, { ip = 'c', port = 1 } })
+T.check(loc[1].location == 'DE' and loc[2].location == '' and loc[3].location == '', 'location: a country code or none')
 sl.refresh()
 sl.onList({ type = 'server_list', error = 'the server list did not answer' })
 T.check(sl.state().state == 'error' and #sl.state().servers == 2, 'an error keeps the last list')

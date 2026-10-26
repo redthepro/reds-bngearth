@@ -48,6 +48,33 @@ class PlanCacheTest(unittest.TestCase):
         self.assertTrue(np.array_equal(self.grader(FakeMD(f), shared=False).apply(la, lo, np.zeros(50)), za),
                         "the same as without the cache")
 
+    def test_complete_plans_kept_for_the_next_run(self):
+        f = features([[(-300, 20), (300, 20)], [(0, -300), (0, 300)]], ["residential", "secondary"])
+        la, lo, _ = FRAME.enu_to_geodetic(np.linspace(-200, 200, 50), np.linspace(-30, 60, 50), 0.0)
+        za = self.grader(FakeMD(f)).apply(la, lo, np.zeros(50))
+        os.environ[plancache.RUN_ENV] = "next"          # (a later server run: its own run folder, empty)
+        md = FakeMD(f)
+        b = self.grader(md)
+        zb = b.apply(la, lo, np.zeros(50))
+        self.assertEqual(md.calls, 0, "planned in the last run: read from the revisit cache")
+        self.assertTrue(np.array_equal(za, zb))
+
+    def test_incomplete_plans_not_kept(self):
+        import revisit
+        f = features([[(-300, 20), (300, 20)]], ["residential"])
+        la, lo, _ = FRAME.enu_to_geodetic(np.linspace(-200, 200, 50), np.linspace(-30, 60, 50), 0.0)
+
+        def faulty(la_, lo_):           # (an elevation download failed while planning)
+            revisit.fault()
+            return 10.0 + 0.0 * np.asarray(la_)
+        g = grading.Grader(FRAME, FakeMD(f), faulty)
+        g.shared = plancache.for_grader(self.dir, g, None, None)
+        g.apply(la, lo, np.zeros(50))
+        os.environ[plancache.RUN_ENV] = "next"
+        md = FakeMD(f)
+        self.grader(md).apply(la, lo, np.zeros(50))
+        self.assertGreater(md.calls, 0, "planned again: the last run's plans were not complete")
+
     def test_no_run_no_cache(self):
         os.environ.pop(plancache.RUN_ENV, None)
         self.assertIsNone(plancache.for_grader(self.dir, self.grader(FakeMD(None), False), None, None))

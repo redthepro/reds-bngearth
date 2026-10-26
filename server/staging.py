@@ -113,6 +113,19 @@ def _replace(tmp, path):
 
 
 REPLACE_WAITS = (0.02, 0.05, 0.1, 0.25, 0.5)    # s between the tries of replace_cached (~0.9 s in all)
+READ_WAITS = (0.02, 0.05, 0.1, 0.25)            # s between the tries of read_held
+
+
+def read_held(read):
+    """read() of a cache file, tried again READ_WAITS when it raises PermissionError: on Windows a file another thread
+    or process is replacing cannot be opened for a moment (a map data water layer was "unreadable" and rebuilt from
+    the network, GitHub #240 / #241). The last try's PermissionError goes to the caller."""
+    for wait in READ_WAITS:
+        try:
+            return read()
+        except PermissionError:
+            time.sleep(wait)
+    return read()
 
 
 def replace_cached(tmp, path):

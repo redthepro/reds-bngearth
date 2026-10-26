@@ -386,7 +386,11 @@ STYLES = {
                        wall_tints=(0, 1, 6, 5), attached=0.3),
     "oceania": Style("oceania", 0.55, ((STUCCO, 0.5), (SIDING, 0.3)), 0.25, 0.05, 0.7, (_CLAY, (ROOF_METAL, (0, 1, 4))),
                      pitch=24.0, paint=0.1),
-    # elsewhere (South Asia, Africa, the Middle East, ...): concrete and plaster, mostly flat roofs
+    # South Asia (India, Pakistan, Bangladesh, Sri Lanka, Nepal): a concrete frame and brick under plaster, flat terrace
+    # roofs, pastel and whitewashed walls, metal roofs on sheds (OmdevShastri, PR #146)
+    "south_asia": Style("south_asia", 0.08, ((STUCCO, 0.92),), 0.0, 0.94, 0.2, (_CLAY, (ROOF_METAL, (0, 1, 3))),
+                        pitch=18.0, paint=0.15, wall_tints=(0, 1, 2, 3, 5, 6, 8, 10), attached=0.90),
+    # elsewhere (Africa, the Middle East, ...): concrete and plaster, mostly flat roofs
     "warm": Style("warm", 0.15, ((STUCCO, 0.85),), 0.0, 0.75, 0.4, (_CLAY, (ROOF_METAL, (0, 1, 3))), pitch=20.0,
                   paint=0.0, wall_tints=(0, 1, 2, 3, 4, 5, 6, 8)),
     "cool": Style("cool", 0.3, ((SIDING, 0.4),), 0.05, 0.1, 0.3, (_DARK, (ROOF_METAL, (0, 1, 2, 3))), pitch=30.0,
@@ -418,6 +422,8 @@ def region_style(lat, lon):
         return STYLES["east_asia"]
     if -50.0 <= lat <= -10.0 and 110.0 <= lon <= 180.0:         # Australia, New Zealand
         return STYLES["oceania"]
+    if 6.0 <= lat <= 37.5 and 68.0 <= lon <= 92.5:              # South Asia (not Myanmar, east of 92.5)
+        return STYLES["south_asia"]
     if abs(lat) >= 50.0:
         return STYLES["cool"]
     return STYLES["warm"]
@@ -1925,19 +1931,25 @@ def road_lines(frame, road_layers, x0, y0, margin=50.0, size=256.0):
         near = np.flatnonzero((bb[:, 2] - x0 >= -margin) & (bb[:, 0] - x0 <= size + margin)
                               & (bb[:, 3] - y0 >= -margin) & (bb[:, 1] - y0 <= size + margin))
         for i in near.tolist():
-            if str(cls[i]) not in THROUGH_CLASSES or roadsmod.level_ranges(f, i):
+            if str(cls[i]) not in THROUGH_CLASSES:
                 continue
-            a = f.coord_off[f.ring_off[f.part_off[i]]]
-            b = f.coord_off[f.ring_off[f.part_off[i + 1]]]
-            ll = f.lonlat[a:b]
-            if len(ll) < 2:
-                continue
-            e, n = mapgeom.enu_xy(f, frame, ll)
-            xy = np.stack([e - x0, n - y0], 1)
-            if xy[:, 0].max() < -margin or xy[:, 0].min() > size + margin or xy[:, 1].max() < -margin \
-                    or xy[:, 1].min() > size + margin:
-                continue
-            out.append(xy)
+            if roadsmod.level_ranges(f, i):
+                # its pieces on the ground (a motorway segment with a short overpass in it was left out whole, and the
+                # lorries machine-learned as buildings on its lanes stayed: the A7, GitHub #239; PR #71's finding)
+                lls = [np.asarray(p, np.float64) for p in roadsmod.ground_parts(f, i)]
+            else:
+                a = f.coord_off[f.ring_off[f.part_off[i]]]
+                b = f.coord_off[f.ring_off[f.part_off[i + 1]]]
+                lls = [f.lonlat[a:b]]
+            for ll in lls:
+                if len(ll) < 2:
+                    continue
+                e, n = mapgeom.enu_xy(f, frame, ll)
+                xy = np.stack([e - x0, n - y0], 1)
+                if xy[:, 0].max() < -margin or xy[:, 0].min() > size + margin or xy[:, 1].max() < -margin \
+                        or xy[:, 1].min() > size + margin:
+                    continue
+                out.append(xy)
     return out
 
 
@@ -2091,6 +2103,56 @@ def _ml_false(ring, bridges_xy, water_xy, roads_xy=None):
     return False
 
 
+ML_STEEP_DEG = 25.0         # a machine-learned footprint on ground this steep ...
+ML_FAR_FROM_WAY_M = 60.0    # ... this far from any mapped way (a road, track or path) is a rock or a shadow, not a hut
+ML_CLIFF_DEG = 36.0         # ... and on ground this steep, wherever it is
+# (GitHub #242: 64 machine-learned outlines (Shi et al.'s East Asia set) on Mount Fuji's slopes, median 34 deg, half
+# over 60 m from a trail; the real huts on 6 deg next to the trail. Steep places with real ones, 2026-10-24: La Paz 0 of
+# 5453, Gorkha (Nepal) 0 of 50, Rwanda's hills 1 of 293, Medellin and Valparaiso 0)
+
+
+def _ml_steep(ring, g, ways_xy):
+    """Is a machine-learned footprint (ring, relative to the tile's corner; g its ground at each corner) on ground too
+    steep for it (ML_*)? The slope of the plane through its corners; the distance from its centre to the nearest
+    mapped way (ways_xy: way_lines, the same corner). Pure."""
+    r = np.asarray(ring, np.float64)[:, :2]
+    g = np.asarray(g, np.float64)
+    if len(r) < 3 or len(g) != len(r):
+        return False
+    A = np.c_[r - r.mean(0), np.ones(len(r))]
+    try:
+        (a, b, _), *_ = np.linalg.lstsq(A, g, rcond=None)
+    except np.linalg.LinAlgError:
+        return False
+    slope = math.degrees(math.atan(math.hypot(a, b)))
+    if slope > ML_CLIFF_DEG:
+        return True
+    if slope <= ML_STEEP_DEG:
+        return False
+    return not ways_xy or _line_dist(r.mean(0), ways_xy) > ML_FAR_FROM_WAY_M
+
+
+def way_lines(frame, road_layers, x0, y0, margin=ML_FAR_FROM_WAY_M + 20.0, size=256.0):
+    """Polylines (k, 2) relative to (x0, y0) of every mapped way near the tile (roads of any class, tracks, paths,
+    steps: _ml_steep's access test)."""
+    out = []
+    for f in road_layers:
+        if f is None or len(f.kind) == 0:
+            continue
+        bb = f.boxes(frame)
+        near = np.flatnonzero((bb[:, 2] - x0 >= -margin) & (bb[:, 0] - x0 <= size + margin)
+                              & (bb[:, 3] - y0 >= -margin) & (bb[:, 1] - y0 <= size + margin))
+        for i in near.tolist():
+            a = f.coord_off[f.ring_off[f.part_off[i]]]
+            b = f.coord_off[f.ring_off[f.part_off[i + 1]]]
+            ll = f.lonlat[a:b]
+            if len(ll) < 2:
+                continue
+            e, n = mapgeom.enu_xy(f, frame, ll)
+            out.append(np.stack([e - x0, n - y0], 1))
+    return out
+
+
 def bridge_lines(frame, road_layers, x0, y0, margin=50.0, size=256.0):
     """Polylines (k, 2) relative to (x0, y0) of the road bridges near the tile (their bridge ranges)."""
     import roads as roadsmod
@@ -2159,17 +2221,14 @@ def road_through(ring, lines, step=2.0, holes=()):
     lo, hi = ring.min(0), ring.max(0)
     b = line_boxes(lines)
     near = np.flatnonzero((b[:, 2] >= lo[0]) & (b[:, 0] <= hi[0]) & (b[:, 3] >= lo[1]) & (b[:, 1] <= hi[1]))
-    total = 0.0
-    for li in near:
-        ln = lines[li]
-        for p, q in zip(ln[:-1], ln[1:]):
-            L = float(np.hypot(*(q - p)))
-            k = max(1, int(L / step))
-            for t in (np.arange(k) + 0.5) / k:
-                point = p + (q - p) * t
-                if _inside(ring, point) and not any(_inside(h, point) for h in holes):
-                    total += L / k
-    return total
+    if not len(near):
+        return 0.0
+    fast.require(76, "road_through")         # (the Rust loop: every sample's even-odd test there)
+    sel = [np.asarray(lines[li], np.float64)[:, :2] for li in near]
+    starts = np.r_[0, np.cumsum([len(ln) for ln in sel])].astype(np.int64)
+    return float(fast._ef.road_through(np.ascontiguousarray(np.asarray(ring, np.float64)[:, :2]),
+                                       np.ascontiguousarray(np.concatenate(sel)), starts, float(step),
+                                       [[tuple(p) for p in h] for h in holes]))
 
 
 def road_across(ring, lines, max_w=ACROSS_W):
@@ -2219,9 +2278,102 @@ def _local_holes(features, frame, polygon, x0, y0):
     return tuple(holes)
 
 
+def _parts_index(f):
+    """{building id: [rows]} of a building parts layer, kept on it (the cells stay decoded in memory: every tile of
+    them looks parts up again)."""
+    memo = f.__dict__.get("_bnge_parts_by_bid")
+    if memo is None:
+        memo = {}
+        col = f.attrs.get("building_id")
+        if col is not None:
+            for i in range(len(f.kind)):
+                bid = str(col[i])
+                if bid:
+                    memo.setdefault(bid, []).append(i)
+        f.__dict__["_bnge_parts_by_bid"] = memo
+    return memo
+
+
+def _parts_tops(f):
+    """Each part's own height + bottom (_part_heights' sum; nan without a height) for the whole layer, kept on it."""
+    tops = f.__dict__.get("_bnge_parts_tops")
+    if tops is None:
+        a, n = f.attrs, len(f.kind)
+
+        def col(k):
+            return np.asarray(a[k], np.float64) if k in a else np.full(n, np.nan)
+        with np.errstate(invalid="ignore"):
+            top, mh, nf, f0 = col("height"), col("min_height"), col("num_floors"), col("min_floor")
+            mh = np.where(np.isfinite(mh) & (mh > 0), mh, 0.0)
+            f0 = np.where(np.isfinite(f0) & (f0 > 0), f0, 0.0)
+            floors = np.maximum(FLOOR_M, (nf - f0) * FLOOR_M) + np.where(mh > 0, mh, f0 * FLOOR_M)
+            tops = np.where(np.isfinite(top) & (top > mh + 1.0), top,
+                            np.where(np.isfinite(nf) & (nf > 0), floors, np.nan))
+        f.__dict__["_bnge_parts_tops"] = tops
+    return tops
+
+
+class _PartsOf:
+    """The building parts of a tile's cells by building id, each [(ring in the anchor frame, _part_heights)], made
+    when asked for: a tile needs those of its own buildings, and the toll booths (booths), not all the cells' parts
+    (converting every part for every tile was half of tile_buildings' time in Manhattan, 2026-10-24). A part in two
+    cells' layers is taken once (the first)."""
+
+    def __init__(self, frame, part_layers, x0=0, y0=0):
+        self.frame = frame
+        self.x0, self.y0 = x0, y0
+        self.holes = {}
+        self.layers = [f for f in part_layers if f is not None and len(f.kind)]
+        self.memo = {}
+
+    def _parts(self, f, i):
+        out = []
+        for polygon in f.parts(i):
+            if not polygon or len(polygon[0]) < 4:
+                continue
+            e, n = mapgeom.enu_xy(f, self.frame, np.asarray(polygon[0], np.float64))
+            ring = np.stack([e, n], 1)
+            out.append((ring, _part_heights(f.attrs, i)))
+            self.holes[id(ring)] = _local_holes(f, self.frame, polygon, self.x0, self.y0)
+        return out
+
+    def get(self, bid, default=None):
+        if bid not in self.memo:
+            out, seen = [], set()
+            for f in self.layers:
+                for i in _parts_index(f).get(bid, ()):
+                    pid = f.ids[i]
+                    if pid in seen:
+                        continue
+                    seen.add(pid)
+                    out.extend(self._parts(f, i))
+            self.memo[bid] = out or None
+        got = self.memo[bid]
+        return default if got is None else got
+
+    def booths(self, lo, hi):
+        """The parts (ring, _part_heights) whose top (own height + bottom) is within [lo, hi], of any building."""
+        out, seen = [], set()
+        for f in self.layers:
+            index = _parts_index(f)
+            if not index:
+                continue
+            col = f.attrs["building_id"]
+            tops = _parts_tops(f)
+            with np.errstate(invalid="ignore"):
+                rows = np.flatnonzero((tops >= lo - 1e-6) & (tops <= hi + 1e-6))
+            for i in rows.tolist():
+                pid = f.ids[i]
+                if pid in seen or not str(col[i]):
+                    continue
+                seen.add(pid)
+                out.extend(self._parts(f, i))
+        return out
+
+
 def tile_buildings(frame, x0, y0, x1, y1, layers, elev, water=None, part_layers=(), west_town=False, roads_xy=None,
                    tunnels_xy=None, garages_xy=None, supports=None, bridges_xy=None, water_xy=None, decks=None,
-                   ml_roads_xy=None):
+                   ml_roads_xy=None, ways_xy=None, skip=frozenset()):
     """[(Spec, gmin, gmax)] of the buildings whose footprint centroid is in the tile [x0, x1) x [y0, y1)
     (anchor frame), rings relative to (x0, y0). layers: mapgeom.Features of buildings (one per map cell; a
     building in two cells is taken once, by id and polygon); elev(lat, lon) the physics ground. part_layers: the
@@ -2230,29 +2382,10 @@ def tile_buildings(frame, x0, y0, x1, y1, layers, elev, water=None, part_layers=
     covering one's centre, is a parking structure). supports: support_rings (a building or part on one is the
     bridge's painted steel). bridges_xy / water_xy (bridge_lines, water_rings): a machine-learned footprint (not
     OSM) on a road bridge, over water or on a public road (roads_xy, or ml_roads_xy for that test alone: the far
-    buildings) is a deck, a boat or a vehicle, left out (_ml_false)."""
-    parts_of = {}                       # building id -> [(ring in the anchor frame, own height, bottom)]
-    part_holes = {}
-    pseen = set()
-    for f in part_layers:
-        if f is None or len(f.kind) == 0:
-            continue
-        a = f.attrs
-        for i in range(len(f.kind)):
-            pid = f.ids[i]
-            if pid in pseen:
-                continue
-            pseen.add(pid)
-            bid = str(a["building_id"][i]) if "building_id" in a else ""
-            if not bid:
-                continue
-            for polygon in f.parts(i):
-                if not polygon or len(polygon[0]) < 4:
-                    continue
-                e, n = mapgeom.enu_xy(f, frame, np.asarray(polygon[0], np.float64))
-                ring = np.stack([e, n], 1)
-                parts_of.setdefault(bid, []).append((ring, _part_heights(a, i)))
-                part_holes[id(ring)] = _local_holes(f, frame, polygon, x0, y0)
+    buildings) is a deck, a boat or a vehicle, left out (_ml_false). skip: ids of buildings left out (a gas station's
+    canopy, drawn by the mod from the stock levels' props: gasstations.tile_sites)."""
+    parts_of = _PartsOf(frame, part_layers, x0, y0)     # building id -> [(ring in the anchor frame, (own height, bottom))]
+    part_holes = parts_of.holes
     seen = set()
     rings, attrs, looks, mins = [], [], [], []
     for f in layers:
@@ -2273,7 +2406,7 @@ def tile_buildings(frame, x0, y0, x1, y1, layers, elev, water=None, part_layers=
             if lv is not None and np.isfinite(lv) and lv < 0:
                 continue                # below ground (Shot Tower Metro, level -2, stood across a Baltimore street)
             key = ids[i] if ids is not None else None
-            if key is not None and (key, part_index) in seen:
+            if key is not None and ((key, part_index) in seen or key in skip):
                 continue
             outer = np.asarray(polygon[0], np.float64)
             e, n = mapgeom.enu_xy(f, frame, outer)
@@ -2332,8 +2465,8 @@ def tile_buildings(frame, x0, y0, x1, y1, layers, elev, water=None, part_layers=
             ring = clean_ring(np.stack([e - x0, n - y0], 1))
             if ring is None or _area2(ring) / 2 < MIN_AREA_M2:
                 continue
-            if "src_dataset" in a and str(a["src_dataset"][i]) != "OpenStreetMap" and \
-                    _ml_false(ring, bridges_xy, water_xy, ml_roads_xy if ml_roads_xy is not None else roads_xy):
+            is_ml = "src_dataset" in a and str(a["src_dataset"][i]) != "OpenStreetMap"
+            if is_ml and _ml_false(ring, bridges_xy, water_xy, ml_roads_xy if ml_roads_xy is not None else roads_xy):
                 continue
             if key is not None:
                 seen.add((key, part_index))
@@ -2362,6 +2495,8 @@ def tile_buildings(frame, x0, y0, x1, y1, layers, elev, water=None, part_layers=
             if on is not None:              # a bridge's own: no flats' windows (Tower Bridge's towers, the user 2026-10-18)
                 fm_ = str(at.get("facade_material") or "").lower()
                 at = dict(at, bridge_part=on) if fm_ in STEEL_MATERIALS else dict(at, bridge_masonry=fm_)
+            if is_ml:
+                at = dict(at, ml=True)          # (_ml_steep once its ground is known)
             attrs.append(at)
             looks.append(None)
             mins.append(mh)
@@ -2414,6 +2549,8 @@ def tile_buildings(frame, x0, y0, x1, y1, layers, elev, water=None, part_layers=
         if not ok[i0:i1].all():
             continue
         g = up_all[i0:i1].copy()
+        if at.get("ml") and ways_xy is not None and _ml_steep(ring, g, ways_xy):
+            continue
         if water is not None:
             c = ring.mean(0)
             cla, clo, _ = frame.enu_to_geodetic(c[0] + x0, c[1] + y0, 0.0)
@@ -2459,13 +2596,12 @@ def _toll_islands(frame, layers, parts_of, lines, x0, y0):
     road (lines, relative to (x0, y0)). Not only the tile's own buildings: a part is in its building's tile, and the
     Golden Gate's booths are parts of the plaza's footprint, centred in the next tile from most islands."""
     booths = []
-    for prings in parts_of.values():
-        for pring, hh in prings:
-            if hh is None or not (TOLL_BOOTH_H[0] <= hh[0] + hh[1] <= TOLL_BOOTH_H[1]):
-                continue
-            r = pring - np.array([x0, y0])
-            if _area2(r) / 2 <= TOLL_BOOTH_MAX_AREA:
-                booths.append(r[:-1].mean(0) if len(r) > 1 and np.allclose(r[0], r[-1]) else r.mean(0))
+    for pring, hh in parts_of.booths(*TOLL_BOOTH_H):
+        if hh is None or not (TOLL_BOOTH_H[0] <= hh[0] + hh[1] <= TOLL_BOOTH_H[1]):
+            continue
+        r = pring - np.array([x0, y0])
+        if _area2(r) / 2 <= TOLL_BOOTH_MAX_AREA:
+            booths.append(r[:-1].mean(0) if len(r) > 1 and np.allclose(r[0], r[-1]) else r.mean(0))
     if not booths:
         return []
     segs = [np.concatenate([np.asarray(ln, np.float64)[:-1], np.asarray(ln, np.float64)[1:]], 1)
@@ -2831,9 +2967,10 @@ def _front_fence(spec, a, d, Le, f, A, D, L2, half, z, driveway, roads=None):
     return rows
 
 
-def road_tile_items(frame, tx, ty, md, ground, decks=None):
+def road_tile_items(frame, tx, ty, md, ground, decks=None, skip=frozenset()):
     """tile_buildings of road tile (tx, ty), from the map cells under it. decks: the bridge decks near it
-    [(xy (k, 2), z (k,))] in the anchor frame (roads.BridgeProfiles.parts): buildings they run through get a way."""
+    [(xy (k, 2), z (k,))] in the anchor frame (roads.BridgeProfiles.parts): buildings they run through get a way.
+    skip: building ids left out (gas station canopies)."""
     import roads
     x0, y0, x1, y1 = roads.tile_bbox(tx, ty)
     cds = [md.cell(k, layers=("buildings", "building_parts", "roads", "infrastructure", "water"), kind="demand")
@@ -2842,13 +2979,14 @@ def road_tile_items(frame, tx, ty, md, ground, decks=None):
                           part_layers=[c.layers.get("building_parts") for c in cds],
                           west_town=district_town(frame, tx, ty, md),
                           roads_xy=road_lines(frame, [c.layers.get("roads") for c in cds], x0, y0),
+                          ways_xy=way_lines(frame, [c.layers.get("roads") for c in cds], x0, y0),
                           tunnels_xy=tunnel_lines(frame, [c.layers.get("roads") for c in cds], x0, y0),
                           garages_xy=garage_rings(frame, [c.layers.get("infrastructure") for c in cds], x0, y0),
                           supports=support_rings(frame, [c.layers.get("infrastructure") for c in cds], x0, y0),
                           bridges_xy=bridge_lines(frame, [c.layers.get("roads") for c in cds], x0, y0),
                           water_xy=water_rings(frame, [c.layers.get("water") for c in cds], x0, y0),
                           decks=[(np.asarray(xy, np.float64)[:, :2] - [x0, y0], np.asarray(z, np.float64))
-                                 for xy, z in decks] if decks else None)
+                                 for xy, z in decks] if decks else None, skip=skip)
 
 
 TOWN_COVERAGE = 0.16        # a tile whose footprints cover less than this share is a town / suburb (heights)
@@ -2909,7 +3047,8 @@ def far_tile(frame, tx, ty, md, ground, out_dir, vfs_dir, aid):
                            supports=support_rings(frame, [c.layers.get("infrastructure") for c in cds], x0, y0),
                            bridges_xy=bridge_lines(frame, [c.layers.get("roads") for c in cds], x0, y0),
                            water_xy=water_rings(frame, [c.layers.get("water") for c in cds], x0, y0),
-                           ml_roads_xy=road_lines(frame, [c.layers.get("roads") for c in cds], x0, y0))
+                           ml_roads_xy=road_lines(frame, [c.layers.get("roads") for c in cds], x0, y0),
+                           ways_xy=way_lines(frame, [c.layers.get("roads") for c in cds], x0, y0, size=x1 - x0))
     mesh = build(items, lite=True)
     data = {"v": 1}
     if mesh is not None:

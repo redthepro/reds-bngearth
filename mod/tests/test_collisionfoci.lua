@@ -46,4 +46,20 @@ T.check(i1.x0 == 700 - cf.PLAYER_R and i1.x1 == 700 + cf.PLAYER_R, 'an island\'s
 -- no active car: every player's car and traffic car is a focus
 T.check(#cf.compute(vehicles, nil, nil, nil) == 4, 'no active car: all but the parked one')
 
+-- the game's vehicles: walking mode's unicycle left out (GitHub #240: a focus and a far car of its own after the
+-- player got back in a car, every collision rebuild ~4 s)
+do
+  local function veh(id, x, jbeam)
+    return { getId = function() return id end, getPosition = function() return { x = x, y = 0, z = 0 } end,
+      getJBeamFilename = function() return jbeam end }
+  end
+  local objs = { veh(1, 0, 'pickup'), veh(2, 900, 'unicycle'), veh(3, 50, 'etk800') }
+  local oldBe = rawget(_G, 'be')
+  be = { getObjectCount = function() return #objs end, getObject = function(_, i) return objs[i + 1] end }
+  local ids = {}
+  for _, v in ipairs(cf.vehicles()) do ids[#ids + 1] = v.id end
+  T.check(#ids == 2 and ids[1] == 1 and ids[2] == 3, 'the walker left out: ' .. table.concat(ids, ','))
+  be = oldBe
+end
+
 T.done('test_collisionfoci')

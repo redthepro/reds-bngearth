@@ -1,4 +1,5 @@
 import gc
+import os
 import sys
 import tempfile
 import threading
@@ -55,6 +56,8 @@ class FakeFetcher:
 
     def get(self, url, *, kind="demand", headers=None):
         import netfetch
+        if url == demmod.COVERAGE_URL:      # (no file list here: every tile asked)
+            raise netfetch.HostUnavailable("no coverage list in this test")
         if kind == "prefetch" and sum(1 for _, k in self.calls if k == "prefetch") >= self.allow:
             raise netfetch.Deferred("no spare tokens")
         self.calls.append((url, kind))
@@ -172,6 +175,49 @@ class LidarDepthTest(unittest.TestCase):
             demmod.MIRROR_MB = saved
 
 
+class CoverageTest(unittest.TestCase):
+    """Mapterhorn's file list (download_urls.json): a tile deeper than it has under a z6 tile is not asked for."""
+
+    DOC = {"items": [{"name": "planet.pmtiles", "min_zoom": 0, "max_zoom": 12},
+                     {"name": "6-10-22.pmtiles", "min_zoom": 13, "max_zoom": 16},
+                     {"name": "6-11-22.pmtiles", "min_zoom": 13, "max_zoom": 13}]}
+
+    def test_index(self):
+        self.assertEqual(demmod.coverage_index(self.DOC), {(10, 22): 16, (11, 22): 13})
+
+    def test_unlisted_tiles_are_not_asked(self):
+        import json
+
+        class Fetcher(LidarDepthFetcher):
+            def get(self, url, *, kind="demand", headers=None):
+                if url == demmod.COVERAGE_URL:
+                    self.calls.append(url)
+
+                    class R:
+                        body = json.dumps(CoverageTest.DOC).encode()
+                    return R()
+                return super().get(url, kind=kind, headers=headers)
+        saved = dict(demmod._coverage)
+        demmod._coverage.update(index=None, at=-1e18, failed=False)
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                f = Fetcher()
+                dem = demmod.Dem(d, fetcher=f)
+                self.assertIsNone(dem._download(demmod.MAPTERHORN, 16, (12 << 10) + 5, 22 << 10), "unlisted z6 tile")
+                self.assertIsNone(dem._download(demmod.MAPTERHORN, 14, (11 << 8) + 5, 22 << 8), "deeper than its file")
+                self.assertEqual(f.calls, [demmod.COVERAGE_URL], "neither asked; the list read once")
+                self.assertIsNotNone(dem._download(demmod.MAPTERHORN, 14, (10 << 8) + 5, 22 << 8))
+                self.assertIsNotNone(dem._download(demmod.MAPTERHORN, 12, 12 << 6, 22 << 6), "the planet: every z12")
+                self.assertEqual(len(f.calls), 3)
+                self.assertTrue(os.path.exists(os.path.join(d, "mapterhorn", "download_urls.json")), "kept on disk")
+                # routeahead's progress: a tile Mapterhorn does not list never lands on disk, and counts as done
+                self.assertTrue(dem.has(16, (12 << 10) + 5, 22 << 10), "unlisted: nothing to download")
+                self.assertFalse(dem.has(14, (10 << 8) + 6, 22 << 8), "listed, not fetched yet")
+        finally:
+            demmod._coverage.clear()
+            demmod._coverage.update(saved)
+
+
 class FillHolesTest(unittest.TestCase):
     def test_small_hole_filled_sea_kept(self):
         a = np.full((64, 64), -1.5, np.float32)
@@ -209,6 +255,17 @@ class DemPrefetchTest(unittest.TestCase):
             f = FakeFetcher(allow=1)
             dem = demmod.Dem(d, fetcher=f)
             self.assertEqual(dem.prefetch([(15, 1, 1), (15, 2, 1), (15, 3, 1)]), (1, True))
+
+    def test_has_is_a_cheap_exists_check(self):
+        with tempfile.TemporaryDirectory() as d:
+            dem = demmod.Dem(d, fetcher=FakeFetcher())
+            self.assertFalse(dem.has(15, 100, 200))
+            dem.prefetch([(15, 100, 200)])
+            self.assertTrue(dem.has(15, 100, 200))
+            miss = os.path.join(d, "mapterhorn", "15", "101", "200.404")
+            os.makedirs(os.path.dirname(miss), exist_ok=True)
+            open(miss, "w").close()
+            self.assertTrue(dem.has(15, 101, 200), "a remembered 404: nothing to download")
 
     def test_keys_around(self):
         with tempfile.TemporaryDirectory() as d:

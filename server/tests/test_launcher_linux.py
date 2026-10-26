@@ -141,6 +141,20 @@ class CaCerts(unittest.TestCase):
         self.assertEqual(self.run_it((), {"SSL_CERT_FILE": "/mine.pem"}), "/mine.pem")
 
 
+
+class CacheDirTest(unittest.TestCase):
+    """--cache-dir: the download cache on another drive, remembered (GitHub #254)."""
+    def test_remembered_and_forgotten(self):
+        with tempfile.TemporaryDirectory() as dd:
+            self.assertIsNone(launcher.cache_dir_arg(None, dd), "the server's default")
+            where = os.path.join(dd, "other drive", "cache")
+            self.assertEqual(launcher.cache_dir_arg(f' "{where}" ', dd), where)
+            self.assertTrue(os.path.isdir(where), "made")
+            self.assertEqual(launcher.cache_dir_arg(None, dd), where, "kept for the next start")
+            self.assertIsNone(launcher.cache_dir_arg("default", dd))
+            self.assertIsNone(launcher.cache_dir_arg(None, dd), "forgotten")
+
+
 if __name__ == "__main__":
     unittest.main()
 

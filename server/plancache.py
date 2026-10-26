@@ -58,18 +58,25 @@ def start_run(cache_dir):
 
 def for_grader(cache_dir, grader, widths, wet):
     """The PlanCache of a grading.Grader (its anchor frame; settings that change plans in the signature), or None
-    outside a server run."""
+    outside a server run. Complete plans are kept in the revisit cache too (persist): a place's next visit (a game
+    started where it was left) reads them instead of planning again."""
     run = os.environ.get(RUN_ENV)
     if not run:
         return None
     f = grader.frame
-    return PlanCache(os.path.join(cache_dir, "plans", run), f.lat0, f.lon0,
-                     f"w{int(widths is not None)}s{int(wet is not None)}")
+    md = getattr(grader, "md", None)
+    pc = PlanCache(os.path.join(cache_dir, "plans", run), f.lat0, f.lon0,
+                   f"w{int(widths is not None)}s{int(wet is not None)}")
+    pc.persist = (cache_dir, (round(float(f.lat0), 7), round(float(f.lon0), 7), pc.signature,
+                              md.versions() if md is not None and hasattr(md, "versions") else None))
+    return pc
 
 
 class PlanCache:
     def __init__(self, root, lat, lon, signature):
         self.dir = os.path.join(root, f"{lat:.9f}_{lon:.9f}", signature)
+        self.signature = signature
+        self.persist = None     # (cache dir, key parts) of the revisit cache's copy (for_grader), or None
         self.stats = {"read": 0, "written": 0, "waited": 0, "wait_s": 0.0}
         self._lock = threading.Lock()
 
@@ -81,7 +88,12 @@ class PlanCache:
         from grading import Plan
         from roads import Spec
         try:
-            with np.load(self._path(key), allow_pickle=False) as f:
+            src = self._path(key)
+            if not os.path.exists(src):
+                src = self._kept(key)
+                if src is None:
+                    return None
+            with np.load(src, allow_pickle=False) as f:
                 meta = json.loads(bytes(f["meta"]).decode("utf-8"))
                 lists = {g: _split(f, g) for g in ("p", "z", "c", "k", "v", "o")}
         except (OSError, ValueError, KeyError, TypeError):
@@ -93,12 +105,30 @@ class PlanCache:
             plans.append((m["fid"], pl))
         keeps = list(zip(lists["k"], meta["keeps"]))
         covers = list(zip(lists["v"], meta["covers"]))
-        opens = [(xy, Spec(**sp)) for xy, sp in zip(lists["o"], meta["opens"])]
+        opens = [(xy, Spec(**{**sp, "sides": tuple(sp["sides"]) if sp.get("sides") is not None else None}))
+                 for xy, sp in zip(lists["o"], meta["opens"])]   # (JSON gave sides back as a list)
         with self._lock:
             self.stats["read"] += 1
         return plans, keeps, covers, opens
 
-    def store(self, key, plans, keeps, covers, opens):
+    def _revisit_key(self, key):
+        import revisit
+        return revisit.key("plans", *self.persist[1], (int(key[0]), int(key[1]), int(key[2])))
+
+    def _kept(self, key):
+        """The revisit cache's copy of cell key's plans (a file-like npz), or None."""
+        if self.persist is None:
+            return None
+        import io
+        import revisit
+        got = revisit.load(self.persist[0], "plans", self._revisit_key(key))
+        if got is None or "plans.npz" not in got[0]:
+            return None
+        return io.BytesIO(got[0]["plans.npz"])
+
+    def store(self, key, plans, keeps, covers, opens, persist=False):
+        """Write cell key's plans for the run's other processes; persist: also into the revisit cache (complete plans:
+        nothing they read failed or was missing, Grader._plan_cell)."""
         meta = {"plans": [{"fid": fid, "half": p.half, "abut": list(p.abut), "road_half": p.road_half,
                            "rid": int(p.rid), "max_wall": float(p.max_wall), "cut": p.cut is not None}
                           for fid, p in plans],
@@ -119,6 +149,10 @@ class PlanCache:
             with open(tmp, "wb") as fh:
                 np.savez(fh, **arrays)
             os.replace(tmp, p)
+            if persist and self.persist is not None:
+                import revisit
+                with open(p, "rb") as fh:
+                    revisit.store(self.persist[0], "plans", self._revisit_key(key), {"plans.npz": fh.read()})
         except (OSError, ValueError, TypeError):
             return False
         with self._lock:

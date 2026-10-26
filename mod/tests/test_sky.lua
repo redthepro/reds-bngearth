@@ -231,5 +231,11 @@ tod.time, tod.play = 0.5, false
 run(sky.RESYNC_S and sky.RESYNC_S + 5 or 40)
 check(tod.time == 0.5 and tod.play == false, 'other levels: their time is not synced to the real clock')
 
+-- a BeamMP server's clock (G.TIME): a fixed or running local time from its start, on the real date
+check(math.abs(sky.serverHours({ hours = 20.5, speed = 0, epoch = 1000 }, 5000) - 20.5) < 1e-9, 'a fixed server time stays')
+check(math.abs(sky.serverHours({ hours = 23, speed = 60, epoch = 1000 }, 1000 + 120) - 1) < 1e-9, 'x60: two minutes are two hours (wraps)')
+check(sky.setServerClock({ hours = 21, speed = 0 }) ~= nil and sky.serverClock().hours == 21, 'server clock set')
+check(sky.setServerClock(nil) == nil and sky.serverClock() == nil, 'cleared: the real clock again')
+
 print(string.format('test_sky: %d passed, %d failed', pass, fail))
 os.exit(fail == 0 and 0 or 1)

@@ -338,6 +338,32 @@ function M.describe(code)
   return '?'
 end
 
+-- A BeamMP server's weather (its plugin's G.WEATHER, through mpsession): every player gets the same, as a weather
+-- message like the world server's real one (WMO code, cloud cover %, wind m/s, visibility m, rain mm/h, snow cm/h).
+M.PRESETS = {
+  clear = { code = 0, cover = { low = 0, mid = 0, high = 5 }, wind = { ms = 2, fromDeg = 270 }, visM = 40000,
+    slTempC = 20 },
+  cloudy = { code = 3, cover = { low = 85, mid = 70, high = 40 }, wind = { ms = 4, fromDeg = 250 }, visM = 20000,
+    slTempC = 14 },
+  rain = { code = 63, cover = { low = 100, mid = 90, high = 60 }, wind = { ms = 6, gustMs = 10, fromDeg = 230 },
+    visM = 8000, rainMmH = 4, slTempC = 11 },
+  storm = { code = 95, cover = { low = 100, mid = 100, high = 80 }, wind = { ms = 13, gustMs = 22, fromDeg = 220 },
+    visM = 3000, rainMmH = 15, slTempC = 17 },
+  snow = { code = 73, cover = { low = 100, mid = 90, high = 60 }, wind = { ms = 5, gustMs = 8, fromDeg = 340 },
+    visM = 4000, snowCmH = 1.5, slTempC = -4 },
+  fog = { code = 45, cover = { low = 100, mid = 20, high = 0 }, wind = { ms = 1, fromDeg = 180 }, visM = 300,
+    fog = true, slTempC = 8 },
+}
+
+-- Pure: the weather message of preset name (nil: not one).
+function M.presetMsg(name)
+  local p = M.PRESETS[tostring(name or ''):lower()]
+  if not p then return nil end
+  local m = { preset = tostring(name):lower() }
+  for k, v in pairs(p) do m[k] = v end
+  return m
+end
+
 function M.compass(deg)
   local names = { 'N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW' }
   return names[math.floor(((tonumber(deg) or 0) % 360) / 45 + 0.5) % 8 + 1]
@@ -348,6 +374,7 @@ end
 
 local mode = 'real'
 local lastMsg = nil                     -- the latest message, kept across level loads
+local preset = nil                      -- a BeamMP server's weather (setPreset): its message, in place of the real one
 local lastGravity = nil                 -- the latest 'gravity' message (server), kept the same way
 local applying = false                  -- our own core_environment calls (their hook is not a change)
 local S
@@ -682,8 +709,10 @@ end
 
 function M.onWeather(msg)
   if type(msg) ~= 'table' then return end
-  lastMsg = msg
-  S.tgt = M.targets(msg)
+  if not preset then
+    lastMsg = msg
+    S.tgt = M.targets(msg)
+  end
   local sk = sky()
   local off = tonumber(msg.utcOffsetS)
   if sk and sk.setRealUtcOffset and off then sk.setRealUtcOffset(off / 3600, tonumber(msg.lat), tonumber(msg.lon)) end
@@ -788,6 +817,7 @@ end
 function M.setMode(m)
   if m == 'auto' then m = 'real' end
   if m ~= 'real' and m ~= 'manual' then return 'mode must be "real" or "manual"' end
+  if m == 'manual' and mode ~= 'manual' then M.manualBy = debug.traceback('', 2) end   -- (who: the MP status)
   mode = m
   S.pending = nil
   if mode == 'real' then
@@ -801,6 +831,19 @@ function M.setMode(m)
 end
 function M.getMode() return mode end
 
+-- A BeamMP server's weather preset (M.PRESETS; nil or 'real': the real weather again, from the next real message).
+function M.setPreset(name)
+  local m = M.presetMsg(name)
+  preset = m
+  if m then
+    lastMsg = m
+    if S then S.tgt = M.targets(m) end
+  end
+  return m ~= nil
+end
+
+function M.preset() return preset and preset.preset or nil end
+
 function M.setGravityEnabled(on)
   M.GRAVITY_ENABLED = on and true or false
   S.gravTimer = M.GRAVITY_CHECK_S
@@ -810,7 +853,8 @@ end
 -- One line for the BeamNG.Earth window.
 function M.statusLine()
   local m = lastMsg
-  local head = 'Weather (' .. mode .. ((mode == 'manual' and S.switched) and ', changed in the game' or '') .. ')'
+  local head = 'Weather (' .. ((preset and mode == 'real') and ('server: ' .. preset.preset) or mode)
+    .. ((mode == 'manual' and S.switched) and ', changed in the game' or '') .. ')'
   if not m then return head .. ': no data yet' end
   local w = m.wind or {}
   return string.format('%s: %.0f C, %s, wind %.0f m/s from %s, visibility %s', head, tonumber(m.tempC) or 0,

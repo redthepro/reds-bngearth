@@ -207,6 +207,25 @@ function M.beamngRotate(qx, qy, qz, qw, x, y, z)
          z - tz * qw + (qx * ty - qy * tx)
 end
 
+-- Teleport anchors on a grid (core.teleportTo): the same place gets the same frame every time, so the server can keep
+-- what it built there (its revisit cache: a game started where it was left reuses the last session's tiles). SNAP_DEG
+-- of latitude (~1.1 km); longitude in steps that double toward the poles to stay about as long. Past SNAP_MAX_LAT no
+-- snapping (the polar frames). The car lands at its real spot, at most ~0.8 km from the origin.
+M.SNAP_DEG = 0.01
+M.SNAP_MAX_LAT = 85.0
+
+function M.snapAnchor(latDeg, lonDeg)
+  if math.abs(latDeg) > M.SNAP_MAX_LAT then return latDeg, lonDeg end
+  local lat = math.floor(latDeg / M.SNAP_DEG + 0.5) * M.SNAP_DEG
+  local c = math.cos(math.rad(lat))
+  local k = 1                   -- (k * cos in (0.5, 1]: a step of 0.55-1.1 km)
+  while c * k * 2 <= 1.0 + 1e-12 and k < 128 do k = k * 2 end
+  local step = M.SNAP_DEG * k
+  local lon = math.floor(lonDeg / step + 0.5) * step
+  if lon >= 180 then lon = lon - 360 elseif lon < -180 then lon = lon + 360 end
+  return tonumber(string.format('%.6f', lat)), tonumber(string.format('%.6f', lon))
+end
+
 M.Anchor = Anchor
 M.Transform = Transform
 

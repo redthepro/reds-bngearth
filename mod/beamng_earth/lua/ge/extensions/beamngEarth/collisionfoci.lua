@@ -80,6 +80,17 @@ function M.islands(foci, active)
   return out
 end
 
+-- Is vehicle object o walking mode's unicycle (the "vehicle" a player on foot is)? Left out of the vehicles: once the
+-- player is back in a car the game keeps it standing where they got in, and as a 'player' car it was a collision
+-- focus of its own (PLAYER_R, solid trees) and a far car to save (farcars), never saved; every static collision
+-- rebuild after it took ~4 s instead of ~0.01 s (GitHub #240). The unicycle being ridden is the active vehicle: the
+-- terrain block and its own island follow it as for any car.
+M.WALKER_JBEAM = 'unicycle'
+function M.isWalker(o)
+  local ok, name = pcall(function() return o.getJBeamFilename and o:getJBeamFilename() end)
+  return ok and name == M.WALKER_JBEAM
+end
+
 -- The game's vehicles as { id, x, y, kind }: AI traffic (gameplay_traffic), parked cars (gameplay_parking), the rest
 -- 'player' (spawned by a player; in BeamMP another player's car is also a vehicle of this game).
 function M.vehicles()
@@ -101,7 +112,7 @@ function M.vehicles()
   local floats = ms and ms.isFloating
   for i = 0, be:getObjectCount() - 1 do
     local o = be:getObject(i)
-    if o and o.getPosition and not (floats and floats(o:getId())) then
+    if o and o.getPosition and not (floats and floats(o:getId())) and not M.isWalker(o) then
       local id = o:getId()
       local p = o:getPosition()
       out[#out + 1] = { id = id, x = p.x, y = p.y, kind = traffic[id] and 'traffic' or parked[id] and 'parked' or 'player' }

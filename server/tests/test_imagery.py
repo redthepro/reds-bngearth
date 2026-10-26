@@ -202,6 +202,35 @@ class ChainTest(unittest.TestCase):
         self.assertEqual(set(used), {"eox2023"})
         self.assertFalse([r for r in im.requests if r[0] == "usgs"])
 
+    def test_black_part_of_a_tile_from_the_next_source(self):
+        """A regional photo ending mid-tile with black past its edge (New Jersey's over Manhattan, GitHub #251): the black
+        part comes from the next source, the rest of the tile stays."""
+        def serve(name, z, x, y):
+            if name == "usgs" and z >= 15:
+                a = np.zeros((256, 256, 3), np.uint8) + np.array(self.colour(name), np.uint8)
+                a[::2, ::2] += 6
+                a[:, :128] = 0              # its west half outside the data
+                return 200, png(a)
+            return self.tile(name, z, x, y)
+        rgb, used = self.render(FakeNet(self.tmp.name, serve, tone=0.0))
+        self.assertIn("usgs", used)
+        self.assertIn("eox2023", used, "the black part from the next source")
+        self.assertFalse((rgb.reshape(-1, 3).max(1) <= imagery.NODATA_MAX).any(), "no black texels left")
+
+    def test_nodata_mask(self):
+        rng = np.random.default_rng(1)
+        a = rng.integers(20, 200, (256, 256, 3), dtype=np.uint8)
+        self.assertIsNone(imagery.nodata_mask(a))
+        a[30, 30] = 0
+        a[50:55, 50:55] = 2             # a speck and a small deep shadow: data
+        self.assertIsNone(imagery.nodata_mask(a))
+        a[100:180, :60] = 0
+        m = imagery.nodata_mask(a)
+        self.assertTrue(m[100:180, :60].all())
+        self.assertTrue(m[100:180, 60:62].all(), "its JPEG fringe too")
+        self.assertFalse(m[100:180, 62:].any())
+        self.assertFalse(m[50:55, 50:55].any())
+
     def test_blank_last_source_is_used(self):
         """EOX draws the open ocean as one uniform colour: accepted from the last source."""
         def serve(name, z, x, y):

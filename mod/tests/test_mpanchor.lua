@@ -61,6 +61,7 @@ positionGE.handle(string.format('p:6-0:{"pos":[%.6f,%.6f,%.6f]}', fe, fn, fu))
 T.check(#got == n0 and ma.isFar('6-0'), 'a car 500 km off: its position dropped, far')
 positionGE.handle(string.format('p:6-0:{"pos":[%.9f,%.9f,%.9f]}', te, tn, tu))
 T.check(#got == n0 + 1 and not ma.isFar('6-0'), 'near again: placed, not far')
+T.check(ma.nearFor('6-0') < 1 and ma.nearFor('9-9') == math.huge, 'near again just now (back on after BACK_ON_SETTLE_S)')
 
 positionGE.handle('p:5-0:{"pos":[1,2,3]}')
 T.check(got[#got] == 'p:5-0:{"pos":[1,2,3]}', 'an unknown player\'s position: untouched')

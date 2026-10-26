@@ -22,6 +22,7 @@ after the host's miss_ttl (Mapterhorn 90 days: it adds lidar areas; AWS never).
 """
 import contextlib
 import io
+import json
 import logging
 import math
 import os
@@ -72,6 +73,29 @@ SPARSE_GROUP = 2
 
 MAPTERHORN = dict(name="mapterhorn", ext="webp", size=512,
                   url="https://tiles.mapterhorn.com/{z}/{x}/{y}.webp")
+# Mapterhorn's list of its files: the planet to z12, then one file per z6 tile with lidar under it, with the deepest
+# zoom it has there. A deeper tile under a z6 tile it does not list (or deeper than that file goes) is a 404 without
+# asking: a fresh place's first block asked ~240 such tiles (z16 -> z15 -> z14 -> z13 per tile), on its critical path
+# (Belgrade, 2026-10-25).
+COVERAGE_URL = "https://download.mapterhorn.com/download_urls.json"
+COVERAGE_ZOOM = 6
+COVERAGE_MAX_AGE_S = 7 * 86400.0    # the copy on disk read again from the net after this (it adds areas)
+COVERAGE_RETRY_S = 600.0            # a failed read asked again after this (until then: every tile asked, as before)
+_coverage = {"index": None, "at": -1e18, "lock": threading.Lock()}
+
+
+def coverage_index(doc):
+    """{(x, y) of a z6 tile: the deepest zoom Mapterhorn has under it} from its download_urls.json. Pure."""
+    out = {}
+    for it in doc.get("items", ()):
+        name = str(it.get("name", ""))
+        parts = name.split(".")[0].split("-")
+        if len(parts) == 3 and parts[0] == str(COVERAGE_ZOOM):
+            try:
+                out[(int(parts[1]), int(parts[2]))] = int(it["max_zoom"])
+            except (KeyError, TypeError, ValueError):
+                continue
+    return out
 AWS = dict(name="aws-terrarium", ext="png", size=256,
            url="https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png")
 
@@ -178,9 +202,57 @@ class Dem:
     def _path(self, src, z, x, y):
         return os.path.join(self.cache_dir, src["name"], str(z), str(x), f"{y}.{src['ext']}")
 
+    def _coverage(self):
+        """coverage_index of Mapterhorn's file list (the copy on disk, read again from the net when old), or None when
+        it cannot be had: every tile is asked then. One per process."""
+        c = _coverage
+        now = time.time()
+        if c["index"] is not None and now - c["at"] < COVERAGE_MAX_AGE_S:
+            return c["index"]
+        with c["lock"]:
+            if c["index"] is not None and now - c["at"] < COVERAGE_MAX_AGE_S:
+                return c["index"]
+            if c["index"] is None and now - c["at"] < COVERAGE_RETRY_S and c.get("failed"):
+                return None
+            path = os.path.join(self.cache_dir, MAPTERHORN["name"], "download_urls.json")
+            try:
+                age = now - os.path.getmtime(path)
+                if age < COVERAGE_MAX_AGE_S:
+                    with open(path, "rb") as f:
+                        c["index"], c["at"], c["failed"] = coverage_index(json.loads(f.read())), now - age, False
+                        return c["index"]
+            except (OSError, ValueError):
+                pass
+            try:
+                body = self.fetcher.get(COVERAGE_URL, kind="demand").body
+                idx = coverage_index(json.loads(body))
+                if not idx:
+                    raise ValueError("no z6 files listed")
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+                with open(tmp, "wb") as f:
+                    f.write(body)
+                os.replace(tmp, path)
+                c["index"], c["at"], c["failed"] = idx, now, False
+            except Exception as e:      # (offline, a host down, another format): ask every tile, as before
+                log.debug("dem: Mapterhorn coverage: %s: %s", type(e).__name__, e)
+                c["at"], c["failed"] = now, True
+            return c["index"]
+
+    def _listed(self, z, x, y):
+        """False when Mapterhorn's file list says it has no tile (z, x, y) (z > GLOBAL_ZOOM); True otherwise."""
+        idx = self._coverage()
+        if idx is None:
+            return True
+        d = z - COVERAGE_ZOOM
+        return z <= idx.get((x >> d, y >> d), GLOBAL_ZOOM)
+
     def _download(self, src, z, x, y, kind="demand"):
         """Raw tile bytes from disk cache or network; None for a (cached) 404. Raises
         netfetch.FetchError when the host cannot deliver (netfetch.Deferred for a refused prefetch)."""
+        if src is MAPTERHORN and z > GLOBAL_ZOOM and not self._listed(z, x, y):
+            self._count(src["name"] + ":unlisted")
+            return None
         path = self._path(src, z, x, y)
         miss = os.path.join(self.cache_dir, src["name"], str(z), str(x), f"{y}.404")
         data = self.disk.read(path)         # None: not cached (or evicted a moment ago)
@@ -259,6 +331,16 @@ class Dem:
             except netfetch.FetchError:
                 continue
         return got, False
+
+    def has(self, z, x, y):
+        """True when Mapterhorn tile (z, x, y) needs no download: on disk, a 404 remembered, or not in Mapterhorn's
+        file list (_listed; those never land on disk, and routeahead.py's bar stopped short of its total). For
+        routeahead.py's progress count: no tile fetch (the file list is read once per session)."""
+        if os.path.exists(self._path(MAPTERHORN, z, x, y)):
+            return True
+        if os.path.exists(os.path.join(self.cache_dir, MAPTERHORN["name"], str(z), str(x), f"{y}.404")):
+            return True
+        return z > GLOBAL_ZOOM and not self._listed(z, x, y)
 
     def keys_around(self, lat, lon, radius_m, zoom):
         """The tile keys (z, x, y) of zoom covering radius_m around lat/lon, nearest first; with the ground

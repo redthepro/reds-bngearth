@@ -208,9 +208,9 @@ def tile_lot_spots(frame, tx, ty, md, elev, items=None, existing=None):
     if not rings:
         return existing
 
-    def z_at(x, y):
-        la, lo, _ = frame.enu_to_geodetic(x, y, 0.0)
-        return elev(la, lo)
+    def z_at(x, y):                 # the anchor frame's up, as the ground drawn (the Earth's curve: raw heights stood a
+        la, lo, _ = frame.enu_to_geodetic(x, y, 0.0)    # spot ~6 m up 10 km from the anchor, 18 m at 15 km)
+        return frame.geodetic_to_enu(la, lo, np.asarray(elev(la, lo), np.float64))[2]
     return existing + lot_spots(rings, box, z_at, blockers)
 
 

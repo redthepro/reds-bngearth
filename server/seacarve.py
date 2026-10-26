@@ -852,6 +852,8 @@ class SeaCarver:
             nj = np.clip(np.floor(fy + 0.5).astype(np.int64), 0, rl.shape[0] - 1)
             lv[sel] = rl[nj, ni]
         if later:
+            import revisit
+            revisit.fault()                 # (left out: nothing built now is kept)
             self.warm(later)
         return (d, lv) if wait else (d, lv, known)
 

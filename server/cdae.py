@@ -340,16 +340,10 @@ def mesh_arrays(m):
 def face_normal_sum(positions, tris):
     """Vertex normals the way the engine derives them for a DAE without normals: the
     normalised sum of the unit normals of the adjacent faces (tris counter-clockwise = up)."""
-    P = np.asarray(positions, np.float64).reshape(-1, 3)
-    T = np.asarray(tris, np.int64).reshape(-1, 3)
-    fn = np.cross(P[T[:, 1]] - P[T[:, 0]], P[T[:, 2]] - P[T[:, 0]])
-    fl = np.linalg.norm(fn, axis=1)
-    fn /= np.where(fl > 0, fl, 1.0)[:, None]
-    acc = np.zeros_like(P)
-    for k in range(3):
-        np.add.at(acc, T[:, k], fn)
-    al = np.linalg.norm(acc, axis=1)
-    return acc / np.where(al > 0, al, 1.0)[:, None]
+    fast.require(74, "face_normal_sum")         # (the Rust loop: numpy's order of sums, bit for bit)
+    P = np.ascontiguousarray(np.asarray(positions, np.float64).reshape(-1, 3))
+    T = np.ascontiguousarray(np.asarray(tris, np.int64).reshape(-1, 3))
+    return np.asarray(fast._ef.face_normal_sum(P, T))
 
 
 def tangents(V, UV, N, I):
@@ -375,12 +369,9 @@ def _mesh_data(P, T, TM, nmat, normals, uvs, uvs2, tangent_uvs, colors):
 
     # The engine numbers vertices in order of first use by the triangle list and stores the
     # triangles with the opposite winding.
-    flat = T.ravel()
-    first = np.unique(flat, return_index=True)[1]
-    order = flat[np.sort(first)]
-    remap = np.full(len(P), -1, np.int64)
-    remap[order] = np.arange(len(order))
-    idx = remap[T][:, ::-1]
+    fast.require(74, "first_use")
+    order, idx = fast._ef.first_use(np.ascontiguousarray(T, np.int64), len(P))
+    order, idx = np.asarray(order), np.asarray(idx)
 
     V = P[order].astype(np.float32)
     NN = N[order].astype(np.float32)

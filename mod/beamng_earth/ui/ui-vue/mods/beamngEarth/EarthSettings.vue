@@ -101,6 +101,16 @@
                 <div class="option-reset"></div>
               </div>
 
+              <!-- A path (the cache folder, the BeamMP launcher): the system's own window; typed below as the fallback -->
+              <div v-if="item.type === 'path'" class="inline-controls">
+                <BngButton
+                  :accent="ACCENTS.outlined"
+                  :disabled="!!pathBusy"
+                  @click="sendPath(item, true)"
+                >{{ pathBusy === item.what && pathPick ? "Window open..." : "Change..." }}</BngButton>
+                <div class="option-reset"></div>
+              </div>
+
               <!-- Feedback: the report window or the profiler (the menu closes first: settings.lua M.feedback) -->
               <div v-if="item.type === 'feedback'" class="inline-controls">
                 <BngButton :accent="ACCENTS.outlined" @click="openFeedback(item.what)">{{ item.label }}</BngButton>
@@ -184,6 +194,26 @@
               <BngButton :accent="ACCENTS.outlined" @click="cacheConfirm = false">Cancel</BngButton>
             </div>
 
+            <!-- A path typed or pasted (the fallback to the system's window), and where it stands -->
+            <div v-if="item.type === 'path'" class="stacked-controls path-control">
+              <input
+                v-model="pathText[item.what]"
+                class="path-input"
+                :placeholder="item.placeholder"
+                maxlength="1000"
+                @focus="typing(true)"
+                @blur="typing(false)"
+                @keydown.enter.stop.prevent="usePath(item)"
+              />
+              <BngButton
+                :accent="ACCENTS.outlined"
+                :disabled="!!pathBusy || !(pathText[item.what] || '').trim()"
+                @click="usePath(item)"
+              >Use</BngButton>
+              <div class="option-reset"></div>
+            </div>
+            <div v-if="item.type === 'path'" class="option-note" :class="{ 'is-error': pathMsg[item.what] && !pathMsg[item.what].ok }">{{ pathNote(item) }}</div>
+
             <!-- Short help under a control (always shown, not only on hover) -->
             <div v-if="item.note" class="option-note">{{ item.note }}</div>
 
@@ -230,6 +260,12 @@ const cacheResult = ref("")     // "Freed 1.2 GB" / an error
 let cacheClearsAt = 0           // status.cache.clears when the clear was sent
 let cacheSentAt = 0
 let lastWriteAt = 0 // a poll answered just after a uiSet may carry the value from before it
+const pathText = ref({ cache: "", beammp: "" }) // the typed paths
+const pathBusy = ref("")   // the path ('cache' / 'beammp') whose answer is awaited (its window open, or typed)
+const pathPick = ref(false) // ... from the system's window
+const pathMsg = ref({})    // path -> the server's last answer { ok, text }
+let pathAnswers = 0        // status.paths.answers when it was sent
+let pathSentAt = 0
 
 // Mirrors lua/ge/extensions/beamngEarth/settings.lua SCHEMA (the Lua side validates and clamps).
 const settingsSchema = [
@@ -281,13 +317,15 @@ const settingsSchema = [
   {
     name: "Multiplayer",
     items: [
-      { id: "beammpOnLaunch", type: "bool", default: true, name: "Start BeamMP with BeamNG.Earth", desc: "The BeamNG.Earth app starts BeamMP (multiplayer) with the game, so BeamNG.Earth servers show in BeamMP's server browser (main menu, More, BeamMP, the BeamNG.Earth tab). Off: BeamMP isn't started or offered. Takes effect at the next start of the app." },
+      { id: "beammpOnLaunch", type: "bool", default: true, name: "Start BeamMP with BeamNG.Earth", desc: "The BeamNG.Earth app starts BeamMP (multiplayer) with the game, so BeamNG.Earth servers show in BeamMP's server browser (main menu, More, BeamMP, the BeamNG.Earth category). Off: BeamMP isn't started or offered. Takes effect at the next start of the app." },
+      { id: "beammpLauncher", type: "path", what: "beammp", name: "BeamMP launcher", placeholder: "Path to BeamMP-Launcher (the program or its folder)", desc: "The BeamMP launcher the app starts: the one you chose, else the one it found. Change... opens your system's file window to pick your own (it may open behind the game: Alt+Tab to it); or type or paste its path below and press Use. Used from the next start of the app." },
     ],
   },
   {
     name: "Download cache",
     items: [
-      { id: "cacheUsage", type: "info", name: "Download cache", desc: "Elevation and imagery the server downloaded and keeps on disk (~/.cache/beamng-earth), so revisited places load without downloading again: the space in use, the size limit and the number of files." },
+      { id: "cacheUsage", type: "info", name: "Download cache", desc: "Elevation and imagery the server downloaded and keeps on disk (in the cache folder below), so revisited places load without downloading again: the space in use, the size limit and the number of files." },
+      { id: "cacheDir", type: "path", what: "cache", name: "Cache folder", placeholder: "Folder for the download cache, or default", desc: "Where the download cache is kept, e.g. on another drive. Change... opens your system's folder window (it may open behind the game: Alt+Tab to it); or type or paste a folder below and press Use (default: back to .cache/beamng-earth in your home folder). Used from the next start of the app; move the old folder's contents there first to keep what is already downloaded." },
       { id: "cacheCapGb", type: "select", default: "20", name: "Download cache size", desc: "The most the download cache may use. Over the limit, the server removes the files used longest ago (every few minutes, down to 90 % of the limit); never what this session used in the last hour or the gravity model. Kept by the server for its next start.",
         options: [ { label: "5 GB", value: "5" }, { label: "10 GB", value: "10" }, { label: "20 GB", value: "20" }, { label: "50 GB", value: "50" }, { label: "Unlimited", value: "unlimited" } ] },
       { id: "cacheClear", type: "action", name: "Clear cache", desc: "Deletes the downloaded elevation and imagery (and the server's de-shadowing and colour-seam data). What this session used and the gravity model stay. Places are downloaded again when you visit them." },
@@ -429,8 +467,48 @@ function applyState(state) {
     cacheBusy.value = false
     cacheResult.value = "No answer from the server"
   }
+  const p = status.value.paths
+  if (pathBusy.value && p && p.answers > pathAnswers && p.result) { // the server's answer to our choice
+    pathMsg.value = { ...pathMsg.value, [p.result.what]: p.result }
+    if (p.result.ok) pathText.value = { ...pathText.value, [p.result.what]: "" }
+    pathBusy.value = ""
+  } else if (pathBusy.value && Date.now() - pathSentAt > (pathPick.value ? 960000 : 30000)) {
+    pathMsg.value = { ...pathMsg.value, [pathBusy.value]: { ok: false, text: "No answer from the server" } }
+    pathBusy.value = ""
+  }
   if (state.dev) dev.value = state.dev
 }
+
+// The cache folder and the BeamMP launcher: what they are now (the server's app_paths) or the last answer
+function pathNote(item) {
+  const m = pathMsg.value[item.what]
+  if (m) return m.text
+  if (pathBusy.value === item.what) return pathPick.value ? "Pick it in the window that opened (Alt+Tab if it is behind the game)" : "..."
+  const p = status.value.paths
+  if (!p) return "-"
+  if (item.what === "cache") {
+    return p.cacheNext && p.cacheNext !== p.cacheDir ? `In use: ${p.cacheDir}  (next start: ${p.cacheNext})` : `In use: ${p.cacheDir || "-"}`
+  }
+  return p.beammp ? `Now: ${p.beammp}` : "None found"
+}
+
+function sendPath(item, pick, text) {
+  pathMsg.value = { ...pathMsg.value, [item.what]: null }
+  pathAnswers = (status.value.paths && status.value.paths.answers) || 0
+  const script = `beamngEarth_settings and beamngEarth_settings.uiPathSet(${JSON.stringify(item.what)}, ${pick ? "true" : "false"}, ${JSON.stringify(text || "")}) or nil`
+  engineLua(script, res => {
+    if (res && res.ok) { pathBusy.value = item.what; pathPick.value = pick; pathSentAt = Date.now() }
+    else pathMsg.value = { ...pathMsg.value, [item.what]: { ok: false, text: (res && res.error) || "mod not loaded" } }
+  })
+}
+
+function usePath(item) {
+  const t = (pathText.value[item.what] || "").trim()
+  if (t && !pathBusy.value) sendPath(item, false, t)
+}
+
+// typing in a text box: the game's keys off meanwhile
+function typing(on) { engineLua(`if setCEFTyping then setCEFTyping(${on ? "true" : "false"}) end`) }
 
 function refresh() {
   engineLua("beamngEarth_settings and beamngEarth_settings.uiState() or nil", applyState)
@@ -761,6 +839,20 @@ details[open] > summary.category-title {
     font-size: 0.8rem;
     color: rgba(255, 255, 255, 0.55);
     line-height: 1.3;
+    overflow-wrap: anywhere;
+
+    &.is-error { color: #ffb08a; }
+  }
+
+  .path-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0.35em 0.6em;
+    font-size: 0.9rem;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
   }
 }
 

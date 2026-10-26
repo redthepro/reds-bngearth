@@ -222,8 +222,13 @@ T.check(not warned('material'), 'hello: the server\'s far-tile material is the o
 T.check(crossover.cells() == 32 and farfield.stats().exactLevel == -2,
   'FORMAT 3 hello (no cells): 32-cell tiles, exact level L-2 (v1.3.1)')
 local req = received('prepare_anchor')[1]
-T.near(req.lat, 36.596718, 1e-9, 'default lat'); T.near(req.lon, -118.169991, 1e-9, 'default lon')
-T.check(req.cx == 0 and req.cy == 0, 'teleport terrain centred at (0,0)')
+do -- the default start's anchor on its grid (geodesy.snapAnchor), the car at its real spot in that frame
+  local geo = require('beamngEarth/geodesy')
+  T.near(req.lat, 36.6, 1e-9, 'default lat: snapped'); T.near(req.lon, -118.17, 1e-9, 'default lon: snapped')
+  local e, n = geo.newAnchor(36.6, -118.17):geodeticToEnu(36.596718, -118.169991, 0)
+  T.near(req.px, e, 1e-6, 'the start spot east of the anchor'); T.near(req.py, n, 1e-6, '... and north')
+  T.check(req.cx == 0 and req.cy == -256, 'teleport terrain centred on the block round the spot')
+end
 
 scenetree.PostFxMotionBlur = { strength = 0.3 } -- the player's motion blur setting
 serverSend({ type = 'anchor_ready', requestId = req.requestId, anchorId = 1, lat = req.lat, lon = req.lon, groundZ = 1180,
@@ -331,7 +336,8 @@ frames(5)
 T.check(calls.importMaps == imports + 1, 'stale terrain_ready ignored')
 
 ------------------------------------------------------------------------------------------
--- origin rebase at 10 km
+-- origin rebase at 10 km (its anchor at the player, unsnapped: the frame change's geometry; snapped below)
+core.SNAP_TELEPORTS = false
 T.check(core.setRebaseDistance(500) == 2000 and core.setRebaseDistance(10000) == 10000, 'setRebaseDistance clamps')
 veh.pos = vec3(9690, 0, 1200)
 veh.vel = vec3(30, 0, 0)
@@ -821,4 +827,14 @@ T.check(sky.atmoPlanetRadius == 6360 and scenetree.theLevelInfo.visibleDistance 
 T.check(scenetree.findObject('bngEarthTerrain') == nil, 'terrain deleted on unload')
 T.check(#S.liveOf('Material') == 0 and #S.liveOf('TSStatic') == 0, 'far tiles and their materials deleted on unload')
 
+do -- a rebase's anchor on its grid, the terrain hint shifted by the player's spot in that frame
+  core.SNAP_TELEPORTS = true
+  local pl = { lat = 36.6123, lon = -118.0581, dist = 9710, speed = 30, vx = 30, vy = 0 }
+  local aLat, aLon, cx, cy = core._rebaseRequest(pl)
+  local sLat, sLon = geodesy.snapAnchor(pl.lat, pl.lon)
+  T.check(aLat == sLat and aLon == sLon, 'rebase anchor snapped')
+  local dx, dy = geodesy.newAnchor(sLat, sLon):geodeticToEnu(pl.lat, pl.lon, 0)
+  local ex, ey = require('beamngEarth/follow').target(dx + 290, dy, 30, 0)     -- (290 m to the 10 km rebase distance)
+  T.check(cx == ex and cy == ey, string.format('rebase hint in the snapped frame: (%d, %d), want (%d, %d)', cx, cy, ex, ey))
+end
 T.done('test_core_stubbed')

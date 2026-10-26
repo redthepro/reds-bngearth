@@ -18,7 +18,7 @@ import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-FILES = ["install.py", "start.py", "launcher.py", "bmplaunch.py", "run_server.bat", "run_server.sh", "README.md", "LICENSE", "CREDITS.md",
+FILES = ["install.py", "start.py", "launcher.py", "bmplaunch.py", "apppaths.py", "run_server.bat", "run_server.sh", "README.md", "LICENSE", "CREDITS.md",
          "VERSION", "UPDATE_REPO", "docs/QUICKSTART.md"]
 FILES += ['deploy/voice/README.md']
 TREES = ["mod/beamng_earth", "server"]

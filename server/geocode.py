@@ -15,6 +15,17 @@ PHOTON_URL = "https://photon.komoot.io/api/"
 LIMIT = 7
 MIN_CHARS = 3
 ATTRIBUTION = "Search: Photon by komoot, data (c) OpenStreetMap contributors (ODbL)"
+# Names in the language of the country the player is in, where Photon has it (en, de, fr, it): Photon's lang="en"
+# showed "Cologne", "Switzerland" to players in Cologne (SwissCheese26's PR #275: German names for DACH). By the
+# country's main language, from the player's country (earthd: navgraph.country_near, ISO code); English elsewhere.
+LANG_OF_COUNTRY = {**dict.fromkeys(("DE", "AT", "CH", "LI"), "de"), **dict.fromkeys(("FR", "MC", "LU"), "fr"),
+                   **dict.fromkeys(("IT", "SM", "VA"), "it")}
+
+
+def lang_for(country):
+    """Photon's language for a player in country (ISO 3166 alpha-2; None: unknown): "en" where Photon has none of
+    the country's. Pure."""
+    return LANG_OF_COUNTRY.get(str(country or "").upper(), "en")
 
 
 def url(q, lat=None, lon=None, limit=LIMIT, lang="en"):
@@ -60,13 +71,14 @@ def parse(data):
     return out
 
 
-def search(q, lat=None, lon=None, net=None):
-    """Results for q (blocking; [] for a short query). Raises netfetch.FetchError on network trouble."""
+def search(q, lat=None, lon=None, net=None, country=None):
+    """Results for q (blocking; [] for a short query), names in country's language (lang_for). Raises
+    netfetch.FetchError on network trouble."""
     q = (q or "").strip()
     if len(q) < MIN_CHARS:
         return []
     net = net if net is not None else netfetch.default_fetcher()
-    return parse(json.loads(net.get(url(q, lat, lon), kind="demand").body.decode("utf-8")))
+    return parse(json.loads(net.get(url(q, lat, lon, lang=lang_for(country)), kind="demand").body.decode("utf-8")))
 
 
 # ------------------------------------------------------------------------------------------- where am I
@@ -95,10 +107,12 @@ def parse_place(data):
     return {"place": place, "region": p.get("state") or "", "country": p.get("country") or ""}
 
 
-def reverse(lat, lon, net=None):
-    """The town, state and country around (lat, lon) (blocking). Raises netfetch.FetchError on network trouble."""
+def reverse(lat, lon, net=None, country=None):
+    """The town, state and country around (lat, lon) (blocking), in country's language (lang_for). Raises
+    netfetch.FetchError on network trouble."""
     net = net if net is not None else netfetch.default_fetcher()
-    return parse_place(json.loads(net.get(reverse_url(lat, lon), kind="demand").body.decode("utf-8")))
+    return parse_place(json.loads(net.get(reverse_url(lat, lon, lang=lang_for(country)), kind="demand")
+                                  .body.decode("utf-8")))
 
 
 def nearest_street(roads_layers, lat, lon, max_m=STREET_M):

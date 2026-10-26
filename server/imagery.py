@@ -73,6 +73,8 @@ FALLBACK_RGB = (100, 89, 69)       # no imagery anywhere: the terrain material's
 POLAR_RGB = (226, 232, 240)        # ... past Web Mercator's limit, where it is all ice (polar ice sheet, sea ice): snow
 BLANK_RANGE = 2                    # a tile whose pixels all lie within this many levels is uniform
 NODATA_MAX, NODATA_SHARE = 6, 0.02   # an export tile with > 2 % texels this black is outside the data
+NODATA_BLOCK = 8                   # px: inside a tile, a square this size all this black is outside the data
+NODATA_EDGE = 2                    # ... and this much round it (the JPEG's grey fringe on the black)
 NODATA_WHITE_MIN, NODATA_WHITE_SHARE = 250, 0.25   # ... or (nodata "white") > 25 % this white: white roofs
                                                    # are bright but rarely a quarter of a 240 m tile (MD
                                                    # iMAP's white comes back as 253 in its JPEGs)
@@ -311,6 +313,52 @@ def mercator_bbox(z, x, y):
     return x0, y1 - size, x0 + size, y1
 
 
+def _box_any(a, k):
+    """For each element of the bool image a: is it inside some k x k window of a that is all True? Pure."""
+    h, w = a.shape
+    if h < k or w < k:
+        return np.zeros_like(a)
+    s = np.zeros((h + 1, w + 1), np.int32)
+    s[1:, 1:] = a.cumsum(0).cumsum(1)
+    full = (s[k:, k:] - s[:-k, k:] - s[k:, :-k] + s[:-k, :-k]) == k * k      # window starts, (h-k+1, w-k+1)
+    f = np.zeros((h, w), bool)
+    f[:h - k + 1, :w - k + 1] = full
+    # a texel (i, j) is covered when a full window starts within [i-k+1, i] x [j-k+1, j]: the starts grown down-right
+    g = np.zeros((h + 1, w + 1), np.int32)
+    g[1:, 1:] = f.cumsum(0).cumsum(1)
+    i0, i1 = np.clip(np.arange(h) - k + 1, 0, h), np.arange(h) + 1
+    j0, j1 = np.clip(np.arange(w) - k + 1, 0, w), np.arange(w) + 1
+    return (g[np.ix_(i1, j1)] - g[np.ix_(i0, j1)] - g[np.ix_(i1, j0)] + g[np.ix_(i0, j0)]) > 0
+
+
+def _dilate(m, e):
+    """m grown by e texels each way (a (2e+1)-square window). Pure."""
+    h, w = m.shape
+    s = np.zeros((h + 1, w + 1), np.int32)
+    s[1:, 1:] = m.cumsum(0).cumsum(1)
+    i0, i1 = np.clip(np.arange(h) - e, 0, h), np.clip(np.arange(h) + e + 1, 0, h)
+    j0, j1 = np.clip(np.arange(w) - e, 0, w), np.clip(np.arange(w) + e + 1, 0, w)
+    return (s[np.ix_(i1, j1)] - s[np.ix_(i0, j1)] - s[np.ix_(i1, j0)] + s[np.ix_(i0, j0)]) > 0
+
+
+def nodata_mask(rgb):
+    """The texels of a source tile outside its data: in a NODATA_BLOCK square all black (NODATA_MAX), and NODATA_EDGE
+    round it; None when there are none. A regional photo stops mid-tile with black past its edge (New Jersey's over
+    Manhattan drew black streets and blocks: GitHub #251); a whole tile mostly black was caught (NODATA_SHARE, export
+    sources), a black part of one was not. A deep shadow is rarely a whole square of pure black. Pure."""
+    dark = np.maximum(np.maximum(rgb[..., 0], rgb[..., 1]), rgb[..., 2]) <= NODATA_MAX    # (max(axis=2): 20x slower)
+    if dark.sum() < NODATA_BLOCK * NODATA_BLOCK:
+        return None
+    h, w = dark.shape
+    q = NODATA_BLOCK // 2           # an all-black square of NODATA_BLOCK holds an all-black aligned one of half its size
+    if h % q == 0 and w % q == 0 and not dark.reshape(h // q, q, w // q, q).all(axis=(1, 3)).any():
+        return None
+    m = _box_any(dark, NODATA_BLOCK)
+    if not m.any():
+        return None
+    return _dilate(m, NODATA_EDGE) if NODATA_EDGE else m
+
+
 @dataclass(frozen=True)
 class Tile:
     """A decoded source tile: RGB uint8 [256, 256, 3], and whether it is one colour (blank)."""
@@ -366,6 +414,7 @@ class Imagery:
         if colormatch is not None:
             colormatch.bind(self)
         self._cm_lru = OrderedDict()        # (source, z, x, y, "cm1", relit) -> corrected RGB, or the input
+        self._holes = OrderedDict()         # (source, z, x, y) -> nodata_mask of its tile (None: none)
         self._lru = OrderedDict()           # (source, z, x, y) -> Tile, or None (404)
         self._export_locks = {}             # export parent -> its fetch lock (_download_export)
         self._warm_want = []                # warm(): lazy tiles ahead of the player, nearest first
@@ -948,8 +997,25 @@ class Imagery:
                 rgb = cm
             mosaic[r:r + TILE, c:c + TILE, :3] = rgb
             mosaic[r:r + TILE, c:c + TILE, 3] = 255 if relit is None else 254
+            if not last:                    # black past the photo's edge inside the tile: the next source fills it
+                hole = self._hole(k, a)
+                if hole is not None:
+                    mosaic[r:r + TILE, c:c + TILE, 3][hole] = 0
             any_data = True
         return mosaic, tx0 * TILE, ty0 * TILE, any_data
+
+    def _hole(self, key, tile):
+        """nodata_mask of a source tile, kept in a small LRU beside the decoded tiles."""
+        with self._lock:
+            if key in self._holes:
+                self._holes.move_to_end(key)
+                return self._holes[key]
+        m = nodata_mask(tile.rgb)
+        with self._lock:
+            self._holes[key] = m
+            while len(self._holes) > self.mem_tiles:
+                self._holes.popitem(last=False)
+        return m
 
     def _colormatched(self, key, rgb, relit, pending):
         """The colour-seam corrected RGB of a source tile (raw or relit: raw -> de-shadow -> colour

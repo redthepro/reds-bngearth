@@ -416,4 +416,15 @@ T.check(info.size[1] * info.size[2] > 5.1e14 and info.size[1] * info.size[2] < 5
 T.check(li.placeId(li.PREFIX .. '12') == 12 and li.placeId(li.RANDOM) == nil and li.placeId(nil) == nil, 'placeId')
 T.check(not li.previewKey(-33.731908, 150.312007):find('[-.]'), 'preview keys: file-name safe')
 
+-- "Where you left off": the car's place, saved while driving (at most every POS_EVERY_S, once moved POS_MOVE_M), and
+-- at once on a teleport, level end and game close (force)
+local PF = places.POS_FILE
+T.check(places.notePosition(40.0, -75.0, 1000, true) and files[PF].lat == 40.0, 'force: written at once')
+T.check(not places.notePosition(40.01, -75.0, 1010), 'within POS_EVERY_S: not written')
+T.check(not places.notePosition(40.0003, -75.0, 1100), 'moved under POS_MOVE_M: not written')
+T.check(places.notePosition(40.01, -75.0, 1100) and files[PF].lat == 40.01, 'later and farther: written')
+T.check(not places.notePosition(nil, -75.0, 2000, true), 'a bad position: not written')
+places.noteTeleport(35.5, 139.7, 'x', 'teleport')
+T.check(files[PF].lat == 35.5 and places.lastPosition().lon == 139.7, 'a teleport: written at once')
+
 T.done('test_places')

@@ -27,6 +27,19 @@ class FakeMapData:
     def cell(self, key, layers=(), kind="demand"):
         return SimpleNamespace(layers={"roads": self.feats if key == self.first else None})
 
+    def warm(self, needs, kind="demand"):
+        return 0
+
+    def versions(self):             # (part of the revisit cache's key)
+        return {"pipeline": 0}
+
+
+def tmp_cache(test):
+    """A revisit cache folder of the test's own (the tiles' keep-for-the-next-visit cache), removed after it."""
+    d = tempfile.TemporaryDirectory()
+    test.addCleanup(d.cleanup)
+    return d.name
+
 
 class FakeDem:
     def sample(self, lat, lon, zoom, progress=None):
@@ -39,6 +52,7 @@ class RoadsTileTest(unittest.TestCase):
         keys = roads.cells_of_tile(FRAME, 0, 0)
         md = FakeMapData(f, keys[0])
         blockworker._s = SimpleNamespace(md=md, dem=FakeDem(), widths=None, surface=None, airports=None, sea=None, lock=threading.Lock(),
+                                         cache_dir=tmp_cache(self),
                                          bridges={}, anchor=lambda aid, lat, lon: (None, None))
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
             got = blockworker.roads_tile(1, LAT, LON, 15, 0, 0, a, "/temp/x", True, 0.05)
@@ -52,7 +66,8 @@ class RoadsTileTest(unittest.TestCase):
                                     roadmesh.build(FRAME, chunks, elev, (x0, y0, 0.0), 0.05, clip=roads.tile_bbox(0, 0),
                                                    follow=True),
                                     roadmesh.deck(chunks, (x0, y0, 0.0)))
-            self.assertEqual(got, want)
+            self.assertEqual(got[:2], want)
+            self.assertEqual(got[2], [], "no gas stations' pads (gas_stations off)")
             self.assertGreater(got[1], 0)
             self.assertEqual(sorted(os.listdir(a)), sorted(os.listdir(b)))
             for name in os.listdir(a):
@@ -74,7 +89,8 @@ class NavgraphTest(unittest.TestCase):
         keys = mapcells.cells_for_bbox(float(la.min()), float(lo.min()), float(la.max()), float(lo.max()))
         md = FakeMapData(f, keys[0])
         blockworker._s = SimpleNamespace(md=md, dem=FakeDem(), widths=None, surface=None, airports=None, sea=None,
-                                         lock=threading.Lock(), bridges={}, anchor=lambda aid, lat, lon: (None, None))
+                                         lock=threading.Lock(), bridges={}, anchor=lambda aid, lat, lon: (None, None),
+                                         cache_dir=tmp_cache(self))
         rules = {"rightHandDrive": False, "mph": True}
         with tempfile.TemporaryDirectory() as out:
             path, n_nodes, n_edges = blockworker.navgraph(1, LAT, LON, 15, 0.0, 0.0, out, "/temp/x", 7, False, True,
@@ -123,7 +139,8 @@ class FarTileTest(unittest.TestCase):
         tile = farfield.Tile(3, 1, -2)
         px = 128
         with tempfile.TemporaryDirectory() as cache, tempfile.TemporaryDirectory() as out:
-            blockworker._s = SimpleNamespace(dem=FakeDem(), airports=None, sea=None, cache_dir=cache, imagery=None,
+            blockworker._s = SimpleNamespace(dem=FakeDem(), md=None, widths=None, surface=None, airports=None, sea=None,
+                                             cache_dir=cache, imagery=None,
                                              anchor=lambda aid, lat, lon: (None, None))
             tex = {"path": os.path.join(out, "worker.dds"), "px": px, "chain": ["usgs"], "tone": 1.0,
                    "leaf_on": True, "season_mode": "off"}

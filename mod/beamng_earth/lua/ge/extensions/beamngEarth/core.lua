@@ -28,6 +28,21 @@
 local M = {}
 -- terrain-follow moves swap in the server's .ter when it sends one (terrain.swap); false: always importMaps
 M.TER_SWAP = true
+-- teleports and rebases land on an anchor on its grid (geodesy.snapAnchor; teleportTo, rebaseAnchor): the server's
+-- revisit cache keys on it
+M.SNAP_TELEPORTS = true
+
+-- No terrain change while the window is minimized (canvas client size 0): on 0.40.3 every crash of 2026-10-24
+-- whose log shows the window state (access violation reading 0x48 at exe+0x143296, main thread) came 20-60 ms
+-- after a block move or anchor resync with the window minimized (minimap's "Canvas size is invalid: 0, 0" not
+-- yet followed by "valid again"); the moves wait until it is restored.
+local canvasObj = nil
+local function windowMinimized()
+  canvasObj = canvasObj or scenetree.findObject('Canvas')
+  if not canvasObj or not canvasObj.getWindowClientSizeXY then return false end
+  local w, h = canvasObj:getWindowClientSizeXY()
+  return w ~= nil and h ~= nil and (w <= 0 or h <= 0)
+end
 M.dependencies = { 'ui_imgui' }
 
 -- Helper modules live next to this file. 'lua/ge/extensions/?.lua' is on package.path
@@ -61,6 +76,8 @@ local roads = require('beamngEarth/roads') -- DecalRoads from the server's road 
 local sea = require('beamngEarth/sea') -- the sea's WaterBlock tiles (server seatiles.py)
 local trees = require('beamngEarth/trees') -- trees, bushes, rocks (server vegetation.py)
 local parking = require('beamngEarth/parking') -- parked cars on the road tiles' spots (stock gameplay_parking)
+local gasstations = require('beamngEarth/gasstations') -- pumps and the stock refuel prompt (server gasstations.py)
+gasstations.onCollide = roads.markCollisionDirty
 local navgraph = require('beamngEarth/navgraph')
 local postfx = require('beamngEarth/postfx')       -- no far depth-of-field blur in our level
 local gps = require('beamngEarth/gps')               -- the game's GPS route to a place picked on the world map
@@ -108,6 +125,7 @@ local VISIBLE_DISTANCE = 100000
 local LAG_PROBE_FRAMES = 10   -- simulated frames to watch for a rebase's vehicle move to show up
 local PLACE_DELAY_FRAMES = 2   -- let the collision rebuild settle before placing the vehicle
 local FLOOR_WAIT_S = 60        -- s a teleport into a tunnel waits for the tube's floor before giving up (car stays on top)
+local TELEPORT_RETRY_MAX_S = 60 -- s at most between the tries of a teleport whose first block failed (anchor_error)
 local FLOOR_HIT_M = 0.8        -- m the static collision found under floorZ + 2 may differ from floorZ: the tube is there
 local PRE_LIFT = 5             -- m above groundZ + 1 to hold the vehicle until it is placed
 local LOADING_AFTER_TELEPORT_S = 3 -- governor loading mode (8 ms budget) this long after a teleport
@@ -139,6 +157,8 @@ local bannerInfo = { port = net.PORT } -- banner.update's inputs, filled every f
 local horizonOn = false       -- hello.horizon (M1h); outlives levels like the connection
 local farRadius = nil         -- status.radius: the server's far-field radius (m), horizon mode only
 local cacheInfo = nil         -- the server's last 'cache' message (download cache usage); outlives levels
+local appPaths = nil          -- the server's last 'app_paths' (the cache folder, the BeamMP launcher; apppaths.py)
+local appPathAnswers = 0      -- how many of them answered a choice (the settings page tells a new answer by it)
 local updateInfo = nil       -- a newer version on GitHub: { current, latest, url } (server updates.py)
 local updateHidden = false   -- the notice closed for this session (its releases-page button)
 local cacheClears = 0         -- answers to a clear so far (the settings page waits for the next one)
@@ -227,7 +247,21 @@ local teleportTo -- defined with M.teleport (the level start's own teleport is o
 -- the level start's teleport: to the place picked in the level select (levelinfo.lua: a saved place, or a random
 -- road from the server), else to the window's lat/lon (the default start until it is changed)
 local RANDOM_WAIT_S = 15 -- s for the server's random place (an older server never answers: the default start)
+-- "Where you left off": the last place of this game run, else the newest of the saved recent places (the window's
+-- lat / lon live only as long as the game: after a restart, an update's for one, every start went to Mount Whitney,
+-- Discord 2026-10-25), else the default start
 local function defaultStart()
+  -- where the car was last (places.notePosition: while driving, at level end and game close), else the newest recent
+  -- place (a teleport's target), else this run's
+  local okP, pos = pcall(places.lastPosition)
+  if okP and type(pos) == 'table' and tonumber(pos.lat) and tonumber(pos.lon) then
+    return teleportTo(pos.lat, pos.lon, nil, 'start')
+  end
+  if not ui.hasLatLon() then
+    local okR, recent = pcall(places.recentList)
+    local r = okR and type(recent) == 'table' and recent[1] or nil
+    if r and tonumber(r.lat) and tonumber(r.lon) then return teleportTo(r.lat, r.lon, r.name, 'start') end
+  end
   local lat, lon = ui.getLatLon(DEFAULT_LAT, DEFAULT_LON)
   return teleportTo(lat, lon, nil, 'start')
 end
@@ -255,9 +289,10 @@ local function requestAnchor(lat, lon, purpose, cx, cy, place)
     return false
   end
   local id = nextId()
-  st.pending = { requestId = id, purpose = purpose, lat = lat, lon = lon, sentAt = st.clock }
+  st.pending = { requestId = id, purpose = purpose, lat = lat, lon = lon, sentAt = st.clock, cx = cx, cy = cy,
+    place = place }
   net.send({ type = 'prepare_anchor', requestId = id, lat = lat, lon = lon, cx = cx or 0, cy = cy or 0,
-    px = place and place.x or nil, py = place and place.y or nil })
+    px = place and place.x or nil, py = place and place.y or nil, purpose = purpose })
   return true
 end
 
@@ -266,16 +301,36 @@ end
 -- M4 stale-anchor rule (rebase.KEEP_EDGE > 0, the 512² block): at or past the distance (a re-request
 -- after a stale anchor was discarded) the terrain goes where the player will be when the answer
 -- arrives, p + v * (measured anchor latency + 1 s), so a slow server cannot make it stale forever.
-local function rebaseHint(pl)
+-- (dx, dy): the player's spot in the new frame when its anchor is not the player's position (snapped: rebaseAnchor)
+local function rebaseHint(pl, dx, dy)
+  dx, dy = dx or 0, dy or 0
   local rem = math.max(0, rebase.distance - pl.dist)
   if rem <= 0 and rebase.KEEP_EDGE > 0 then
     local lead = rebase.aheadLead(st.anchorLatency)
     local lat = lead - rebase.LEAD_EXTRA_S
-    return follow.centreNear(pl.vx * lead, pl.vy * lead, pl.vx * lat, pl.vy * lat, follow.reachFor(pl.vx, pl.vy))
+    return follow.centreNear(dx + pl.vx * lead, dy + pl.vy * lead, dx + pl.vx * lat, dy + pl.vy * lat,
+      follow.reachFor(pl.vx, pl.vy))
   end
   local px, py = 0, 0
   if pl.speed > 1 then px, py = pl.vx / pl.speed * rem, pl.vy / pl.speed * rem end
-  return follow.target(px, py, pl.vx, pl.vy)
+  return follow.target(dx + px, dy + py, pl.vx, pl.vy)
+end
+
+-- The anchor of a rebase at the player's position (lat, lon): on its grid like a teleport's (geodesy.snapAnchor; the
+-- server's revisit cache keys on it: a road driven again finds what was built along it), with the player's spot in
+-- that frame. -> lat, lon, dx, dy
+local function rebaseAnchor(lat, lon)
+  if not M.SNAP_TELEPORTS then return lat, lon, 0, 0 end
+  local sLat, sLon = geodesy.snapAnchor(lat, lon)
+  local dx, dy = geodesy.newAnchor(sLat, sLon):geodeticToEnu(lat, lon, 0)
+  return sLat, sLon, dx, dy
+end
+
+-- A rebase's request for the player now (pl: st.player): anchor lat, lon and the terrain hint cx, cy in its frame.
+function M._rebaseRequest(pl)
+  local aLat, aLon, dx, dy = rebaseAnchor(pl.lat, pl.lon)
+  local cx, cy = rebaseHint(pl, dx, dy)
+  return aLat, aLon, cx, cy
 end
 
 -- Terrain centre for a resync (same frame): where terrain-follow would put it now.
@@ -464,6 +519,7 @@ local function finishRebase()
   -- roads, buildings, street furniture and trees move with it and stay until the new anchor's tiles cover them
   roads.transform(xf, geodesy)
   trees.transform(xf, geodesy)
+  gasstations.transform(xf)
   sea.transform(xf, msg.anchorId)
   landmarks.transform(xf, msg.anchorId)
   -- a resync with a restarted server keeps the previous session's tiles the same way (st.sessionId
@@ -548,6 +604,13 @@ end
 
 local function commitAnchor(msg, purpose)
   if st.rebasing then finishRebase() end -- never mix two frame changes
+  -- the anchor's region's gas station shapes loaded now (in this heavy slot), not at its first station
+  if msg.fuelShapes then
+    local gt = stopwatch.new()
+    local ok, err = pcall(gasstations.prewarm, msg.fuelShapes)
+    if ok then log('D', 'beamngEarth', string.format('gas stations: shapes prewarmed in %.0f ms', gt()))
+    else log('W', 'beamngEarth', 'gas stations prewarm: ' .. tostring(err)) end
+  end
   if purpose == 'teleport' or not st.anchor then return commitTeleport(msg) end
   return commitRebase(msg, purpose)
 end
@@ -600,7 +663,9 @@ local function placePlayer(z)
   dir = vec3(dir.x, dir.y, 0)
   if dir:length() < 1e-3 then dir = vec3(0, 1, 0) end
   local x, y = st.placeX or 0, st.placeY or 0
-  if x ~= 0 or y ~= 0 then
+  -- (a snapped teleport's spot: the server's height there is the first block's, as at the origin; a ray from above
+  -- hit the old place's buildings, still in the static collision, and the car fell 30 m, 2026-10-25)
+  if (x ~= 0 or y ~= 0) and not st.placeSnapped then
     -- away from the origin (a BeamMP player's anchor): the server's height there is the raw elevation data; set down
     -- on the collision under it (a graded road can be a few metres off)
     local ray = rawget(_G, 'castRayStatic')
@@ -702,6 +767,8 @@ local function onMessage(msg)
     cacheInfo = nil
     local settings = rawget(_G, 'beamngEarth_settings')
     if settings and settings.cacheCapGb then net.send({ type = 'cache', capGb = settings.cacheCapGb() }) end
+    -- gas stations on, after every hello (a server started without them too; this comes before any tile request)
+    net.send({ type = 'gas_stations', on = true })
     -- the on-screen credits: this session's own follow (the attribution line until then)
     credits.clear()
     -- M4: the terrain block size first (everything below may use the lattice / follow table); a
@@ -779,7 +846,17 @@ local function onMessage(msg)
     if not p or msg.requestId ~= p.requestId then return end
     st.pending = nil
     st.retryAt = st.clock + rebase.RETRY_S
-    setStatus('Anchor request failed: ' .. tostring(msg.error))
+    if p.purpose == 'teleport' then
+      -- a teleport's (or the level start's) first block that failed (a damaged elevation download, a host down) is
+      -- asked again, RETRY_S doubling up to TELEPORT_RETRY_MAX_S: nothing else asks for it, and the world stayed
+      -- empty (#286: the start block failed once and the map never loaded)
+      local n = (p.retries or 0) + 1
+      local wait = math.min(TELEPORT_RETRY_MAX_S, rebase.RETRY_S * 2 ^ (n - 1))
+      st.teleportRetry = { lat = p.lat, lon = p.lon, cx = p.cx, cy = p.cy, place = p.place, n = n, at = st.clock + wait }
+      setStatus(string.format('Terrain failed (%s), trying again in %d s', tostring(msg.error), wait))
+    else
+      setStatus('Anchor request failed: ' .. tostring(msg.error))
+    end
   elseif t == 'terrain_ready' then
     local p = st.terrainPending
     if not p or msg.requestId ~= p.requestId or msg.anchorId ~= st.anchorId then return end -- stale
@@ -801,7 +878,7 @@ local function onMessage(msg)
     if msg.anchorId ~= st.anchorId then
       st.refreshLater = msg
     elseif st.block and msg.cx == st.block.cx and msg.cy == st.block.cy and msg.size == terrain.SIZE then
-      commitTerrain(msg)
+      if windowMinimized() then st.deferredRefresh = msg else commitTerrain(msg) end
     end
   elseif t == 'terrain_error' then
     local p = st.terrainPending
@@ -873,6 +950,9 @@ local function onMessage(msg)
     end
   elseif t == 'route_result' then
     if msg.id then routeResults[msg.id] = { points = msg.points or {}, dist = msg.dist, dur = msg.dur, error = msg.error } end
+  elseif t == 'route_download' then
+    -- the planned route's corridor prefetch (server routeahead.py): total/done tile+cell count, shown on the map
+    gps.onRouteDownload(msg)
   elseif t == 'geocode_result' then
     if msg.id then geocodeResults[msg.id] = { results = msg.results or {}, error = msg.error } end
   elseif t == 'map_tiles_ready' then
@@ -898,6 +978,14 @@ local function onMessage(msg)
         done = tonumber(msg.done) or 0, total = tonumber(msg.total) or 0 }
       if msg.state == 'ready' or msg.state == 'error' then updateHidden = false end
     end
+  elseif t == 'app_paths' then
+    -- the settings page's "Cache folder" and "BeamMP launcher": the paths now, and the answer to the last choice
+    local r = type(msg.result) == 'table' and msg.result or nil
+    if r then appPathAnswers = appPathAnswers + 1 end
+    appPaths = { cacheDir = tostring(msg.cacheDir or ''), cacheNext = tostring(msg.cacheNext or ''),
+      beammp = tostring(msg.beammp or ''), answers = appPathAnswers,
+      result = r and { what = tostring(r.what or ''), ok = r.ok == true, text = tostring(r.text or '') }
+        or (appPaths and appPaths.result) }
   elseif t == 'cache' then
     -- the download cache (server cache.py): its usage for the settings page; clearedBytes answers a clear
     local prev = cacheInfo
@@ -1095,6 +1183,14 @@ local function anchorKnown()
   return st.anchorId ~= nil and st.anchorSession == st.sessionId
 end
 
+-- the car's place for "Where you left off" (places.notePosition): force at level end and game close
+local function notePlayerPos(force)
+  local pl = st.player
+  if pl and pl.lat and pl.lon and st.anchorId and not st.pending then
+    pcall(places.notePosition, pl.lat, pl.lon, st.clock, force)
+  end
+end
+
 local function updateWorld(dt)
   if st.floorZ and not st.placeFrames then M.floorCheck() end
   if st.placeFrames then
@@ -1105,8 +1201,17 @@ local function updateWorld(dt)
     end
     return -- no rebase decisions while the player is being placed
   end
+  -- a teleport whose first block failed (anchor_error), asked again (before the player test: there is
+  -- none before the first anchor)
+  local retry = st.teleportRetry
+  if retry and not st.pending and st.clock >= retry.at and net.isConnected() then
+    st.teleportRetry = nil
+    if requestAnchor(retry.lat, retry.lon, 'teleport', retry.cx, retry.cy, retry.place) then st.pending.retries = retry.n end
+  end
+
   local pl = st.player
   if not pl then return end
+  notePlayerPos(false)          -- (every places.POS_EVERY_S at most, once moved POS_MOVE_M)
 
   st.poseTimer = st.poseTimer + dt
   -- no pose before the resync with a restarted server commits (anchorKnown; hello named the
@@ -1163,9 +1268,25 @@ local function updateWorld(dt)
       action = 'resync'
     end
   end
+  local minimized = windowMinimized()
+  if minimized ~= (st.wasMinimized or false) then
+    st.wasMinimized = minimized
+    log('I', 'beamngEarth', minimized and 'window minimized: terrain moves wait' or 'window restored: terrain moves resume')
+  end
+  if minimized then return end
+  local dr = st.deferredRefresh
+  if dr then
+    st.deferredRefresh = nil
+    if dr.anchorId == st.anchorId and st.block and dr.cx == st.block.cx and dr.cy == st.block.cy then
+      commitTerrain(dr)
+    end
+  end
   if (action == 'commit' or action == 'resync') and st.paused then action = nil end -- vehicles move only with physics running
   if action == 'prefetch' then
-    if net.isConnected() then requestAnchor(pl.lat, pl.lon, 'rebase', rebaseHint(pl)) end
+    if net.isConnected() then
+      local aLat, aLon, cx, cy = M._rebaseRequest(pl)
+      requestAnchor(aLat, aLon, 'rebase', cx, cy)
+    end
   elseif action == 'commit' or action == 'resync' then
     -- a heavy op: it runs once the governor has ramped streaming down (asked again every frame);
     -- terrain-follow waits meanwhile, its state belongs to the frame that is about to change
@@ -1761,6 +1882,7 @@ local function onUpdate(dtReal, dtSim)
     -- came after it had passed (Brasov, Sinaia 2026-10-15: the car drove bare ground)
     landmarks.reserve(gov, st.anchorId, st.player, M.viewAway())
     roads.update(gov, st.anchorId, st.player, M.viewAway())
+    gasstations.update(gov)
     t = mark('roads', t)
     landmarks.update(gov, st.anchorId, st.player, M.viewAway())
     farfield.update(gov, (gov.w1 or dtReal * 1000) / 1000, st.cam, st.player)
@@ -1896,10 +2018,12 @@ local function onClientPreStartMission(levelPath)
 end
 
 local function onClientEndMission()
+  notePlayerPos(true)
   hudapps.unhookCityZone()
   hudapps.unhookMinimapNorth()
   postfx.restore()
   pcall(terrainpatch.clear)
+  pcall(gasstations.reset)
   pcall(farcars.reset)
   pcall(mpsession.reset)
   gps.reset()
@@ -1983,7 +2107,18 @@ teleportTo = function(lat, lon, name, kind)
     aLat, aLon, place = adLat, adLon, { x = x, y = y }
     cx, cy = follow.target(x, y, 0, 0)
     log('I', 'beamngEarth', string.format('teleport onto the anchor %.5f, %.5f (%.0f, %.0f there)', aLat, aLon, x, y))
+  elseif M.SNAP_TELEPORTS then
+    -- the anchor on its grid (geodesy.snapAnchor), the car at its real spot in that frame: the server's revisit cache
+    -- keeps what it built per anchor, so a place visited again (a game started where it was left) loads from it
+    local sLat, sLon = geodesy.snapAnchor(lat, lon)
+    if sLat ~= lat or sLon ~= lon then
+      local x, y = geodesy.newAnchor(sLat, sLon):geodeticToEnu(lat, lon, 0)
+      aLat, aLon, place = sLat, sLon, { x = x, y = y }
+      cx, cy = follow.target(x, y, 0, 0)
+    end
   end
+  st.placeSnapped = place ~= nil and not (okA and adLat)
+  st.teleportRetry = nil       -- (a new teleport replaces a failed one's retry)
   if requestAnchor(aLat, aLon, 'teleport', cx, cy, place) then
     setStatus(string.format('Preparing terrain at %.5f, %.5f ...', lat, lon))
     loadprogress.reset()
@@ -1991,6 +2126,7 @@ teleportTo = function(lat, lon, name, kind)
     parking.onTeleport()
     navgraph.onTeleport()
     do local ok, err = pcall(farcars.onTeleport) if not ok then log('W', 'beamngEarth', 'far cars: ' .. tostring(err)) end end
+    pcall(mpsession.onTeleport, place and place.x or 0, place and place.y or 0)    -- (no car: the free camera there)
     if kind ~= 'tool' then
       statusbar.reset()
       local ok, err = pcall(places.noteTeleport, lat, lon, name, kind)
@@ -2172,6 +2308,18 @@ function M.cacheQuery()
   return true
 end
 
+-- The settings page's paths (server apppaths.py, kept for the app's next start): what = 'cache' (the download cache's
+-- folder) or 'beammp' (the BeamMP launcher), chosen in the system's own window (pick) or typed (path); without what,
+-- the paths only. The answer is an app_paths (appPathState().answers + 1).
+function M.appPathState() return appPaths end
+function M.appPath(what, pick, path)
+  if not cacheReady() then return false, 'server not connected' end
+  if not what then net.send({ type = 'app_path' })
+  elseif pick then net.send({ type = 'app_path', what = what, pick = true })
+  else net.send({ type = 'app_path', what = what, path = tostring(path or '') }) end
+  return true
+end
+
 -- The world map's search box: addresses and places from the server (geocode.py); the answer is geocode_result.
 function M.requestGeocode(id, q, lat, lon)
   if not net.isConnected() then return false end
@@ -2212,6 +2360,8 @@ function M.setRoadsEnabled(on)
 end
 
 M.onUpdate = onUpdate
+-- the stock gas stations' POI list (gameplay/rawPois.lua): ours, so freeroam/gasStations.lua offers "Refuel" at them
+M.onGetRawPoiListForLevel = function(levelIdentifier, elements) gasstations.pois(levelIdentifier, elements) end
 M.onPreRender = onPreRender
 M.onUiChangedState = onUiChangedState
 M.onClientStartMission = onClientStartMission
@@ -2219,6 +2369,7 @@ M.onClientPreStartMission = onClientPreStartMission
 M.onNavgraphReloaded = function() navgraph.onReloaded() end
 M.onVehicleMapmgrUpdate = function(id) gps.onVehicleMapmgrUpdate(id) end
 M.onClientEndMission = onClientEndMission
+M.onExit = function() notePlayerPos(true) end           -- the game closing (a crash or a kill: the last periodic one)
 M.onClientPostStartMission = onClientPostStartMission
 M.onExtensionLoaded = onExtensionLoaded
 M.onExtensionUnloaded = onExtensionUnloaded

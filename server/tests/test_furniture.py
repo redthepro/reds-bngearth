@@ -1,5 +1,7 @@
 """furniture: street lights along sidewalk runs at fixed stations of their road, utility poles and their
 wires along country roads; the same stations whichever tile draws them."""
+import ast
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -105,6 +107,36 @@ class JunctionTest(unittest.TestCase):
         for r in rows:              # on the approach's right, outside the carriageways
             self.assertGreater(max(abs(r[1] - 100), abs(r[2] - 100)), 5.0)
 
+    def test_signals_only_where_the_map_has_them(self):
+        """With OpenStreetMap's signals (mapped_signals' points): lights at a junction with one near it, none at a
+        major crossing without (stop signs there are left to the minor arms: none here), and lights at a mapped rural
+        junction too (the user, 2026-10-25: lights where there are none)."""
+        rs = [self.arm(f"a{i}", "tertiary", dx, dy) for i, (dx, dy) in enumerate([(1, 0), (-1, 0), (0, 1), (0, -1)])]
+        none = furniture.junction_props(rs, (0, 0, 256, 256), signals=np.zeros((0, 2)))
+        self.assertNotIn(furniture.G_SIGNAL, [r[0] for r in none], "no mapped signal: no lights")
+        far = furniture.junction_props(rs, (0, 0, 256, 256), signals=np.array([[200.0, 200.0]]))
+        self.assertNotIn(furniture.G_SIGNAL, [r[0] for r in far], "a signal at the next junction is not this one's")
+        at = furniture.junction_props(rs, (0, 0, 256, 256), signals=np.array([[112.0, 96.0]]))
+        self.assertEqual(sorted(r[0] for r in at), [furniture.G_SIGNAL] * 4, "mapped at its stop line: lights")
+        rural = [(f, s._replace(urban=False), p, l) for f, s, p, l in rs]
+        self.assertEqual(furniture.junction_props(rural, (0, 0, 256, 256), signals=np.zeros((0, 2))), [])
+        self.assertEqual(len(furniture.junction_props(rural, (0, 0, 256, 256), signals=np.array([[100.0, 100.0]]))), 4,
+                         "a mapped signal at a rural junction")
+
+    def test_mapped_signals_from_the_infrastructure_layer(self):
+        import geodesy
+        import mapgeom
+        frame = geodesy.EnuFrame(62.6, 29.76, 0.0)
+        ll = np.array([[29.7601, 62.6001], [29.7602, 62.6002], [29.7603, 62.6003]])
+        f = mapgeom.Features(layer="infrastructure", ids=np.array(["s1", "b1", "s2"]),
+                             kind=np.full(3, mapgeom.POINT, np.uint8), part_off=np.arange(4, dtype=np.int64),
+                             ring_off=np.arange(4, dtype=np.int64), coord_off=np.arange(4, dtype=np.int64), lonlat=ll,
+                             attrs={"subtype": np.array(["transportation", "pedestrian", "transportation"]),
+                                    "class": np.array(["traffic_signals", "bench", "traffic_signals"])}, rules={})
+        got = furniture.mapped_signals(frame, [f, f])
+        self.assertEqual(len(got), 2, "the two signals, once each, not the bench")
+        self.assertIsNone(furniture.mapped_signals(frame, [None]), "no layer read: guessed")
+
     def test_divided_road_crossing_one_signal_per_way_in(self):
         # Boston St: a divided road (two one-way carriageways 20 m apart) crossing a street is two junctions; the
         # user saw ten heads there (2026-10-14). One per way in: none on the arms leaving, none across the median.
@@ -152,11 +184,59 @@ class SpeedSignTest(unittest.TestCase):
 
 
     def test_km_h_signs_where_limits_are_in_km_h(self):
-        """Switzerland: an 80 km/h road gets the round 80 sign, a 50 km/h one none (no model), never mph signs."""
+        """Europe: round km/h signs are used there, including higher motorway limits and no-limit signs."""
         r = road("t", "tertiary", True, x0=0.0, x1=400.0)
         rows = furniture.speed_signs([r], {"t": 80 / 1.609344}, (-50, -50, 450, 150), mph_signs=False)
         self.assertEqual(sorted(x[0] for x in rows), ["speedk80", "speedk80"])
-        self.assertEqual(furniture.speed_signs([r], {"t": 50 / 1.609344}, (-50, -50, 450, 150), mph_signs=False), [])
+        rows = furniture.speed_signs([r], {"t": 50 / 1.609344}, (-50, -50, 450, 150), mph_signs=False)
+        self.assertEqual(sorted(x[0] for x in rows), ["speedk50", "speedk50"])
+        rows = furniture.speed_signs([r], {"t": 130 / 1.609344}, (-50, -50, 450, 150), mph_signs=False)
+        self.assertEqual(sorted(x[0] for x in rows), ["speedk130", "speedk130"])
+        rows = furniture.speed_signs([r], {"t": 150 / 1.609344}, (-50, -50, 450, 150), mph_signs=False)
+        self.assertEqual(sorted(x[0] for x in rows), ["speedk150", "speedk150"])
+        rows = furniture.speed_signs([r], {"t": float("inf")}, (-50, -50, 450, 150), mph_signs=False)
+        self.assertEqual(sorted(x[0] for x in rows), ["speedknone", "speedknone"])
+
+    def test_km_h_sign_for_every_ten_and_the_limits_around_them(self):
+        """Every posted tens value from 30 to 150 has a sign (90 is rural France and Romania, 70 an unmapped secondary
+        road), a limit between two rounds to the nearer (half up: 45 is 50, 35 is 40), 20 has none and 160+ gets the 150."""
+        r = road("t", "tertiary", True, x0=0.0, x1=400.0)
+
+        def groups(kmh):
+            rows = furniture.speed_signs([r], {"t": kmh / 1.609344}, (-50, -50, 450, 150), mph_signs=False)
+            return sorted({x[0] for x in rows})
+
+        for n in range(30, 151, 10):
+            self.assertEqual(groups(n), [f"speedk{n}"], n)
+        self.assertEqual(groups(44), ["speedk40"])
+        self.assertEqual(groups(45), ["speedk50"])
+        self.assertEqual(groups(35), ["speedk40"])
+        self.assertEqual(groups(20), [])
+        self.assertEqual(groups(200), ["speedk150"])
+
+
+class SignAssetsTest(unittest.TestCase):
+    """The km/h sign set is written in three places (furniture.SIGN_KMH, the mod's vienna_convention_speed_signs.lua
+    LIMITS, the generator's defaults); a number in one and not another is a sign that is never placed or a model that
+    is missing."""
+    ROOT = Path(__file__).resolve().parents[2]
+
+    def test_server_catalog_and_generator_agree(self):
+        lua = (self.ROOT / "mod/beamng_earth/lua/ge/extensions/beamngEarth/vienna_convention_speed_signs.lua"
+               ).read_text(encoding="utf-8")
+        limits = re.search(r"^M\.LIMITS = \{([^}]*)\}", lua, re.M)
+        catalog = {int(n) for n in re.findall(r"\d+", limits.group(1))}
+        self.assertRegex(lua, r"M\.NONE = 'speedknone'")
+        tree = ast.parse((self.ROOT / "tools/generate_kmh_speed_signs.py").read_text(encoding="utf-8"))
+        defaults = next(ast.literal_eval(s.value) for s in tree.body
+                        if isinstance(s, ast.Assign) and any(getattr(t, "id", "") == "DEFAULT_SPEEDS" for t in s.targets))
+        generated = {s for s in defaults if isinstance(s, int)}
+        self.assertEqual(set(furniture.SIGN_KMH), catalog)
+        self.assertEqual(set(furniture.SIGN_KMH), generated)
+        self.assertIn("none", defaults)
+        art = self.ROOT / "mod/beamng_earth/levels/beamng_earth/art/shapes/beamngEarth"
+        for n in [str(k) + "kph" for k in furniture.SIGN_KMH] + ["_none"]:
+            self.assertTrue((art / f"sign_speed{n}.dae").exists() and (art / f"sign_speed{n}.png").exists(), n)
 
 
 class RoundaboutTest(unittest.TestCase):

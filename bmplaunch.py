@@ -78,9 +78,20 @@ MOD_SETTINGS = os.path.join("settings", "beamngEarth.json")
 ON_LAUNCH = "beammpOnLaunch"
 
 
+def _mod_settings_path(user_dir):
+    """The mod's settings file: the game writes its file names in lower case on Linux (settings/beamngearth.json), so
+    any case is taken; none yet: MOD_SETTINGS."""
+    d = os.path.join(user_dir, os.path.dirname(MOD_SETTINGS))
+    want = os.path.basename(MOD_SETTINGS).lower()
+    for name in _listdir(d):
+        if name.lower() == want:
+            return os.path.join(d, name)
+    return os.path.join(user_dir, MOD_SETTINGS)
+
+
 def _mod_settings(user_dir):
     try:
-        with open(os.path.join(user_dir, MOD_SETTINGS), encoding="utf-8") as f:
+        with open(_mod_settings_path(user_dir), encoding="utf-8") as f:
             d = json.load(f)
             return d if isinstance(d, dict) else {}
     except (OSError, ValueError):
@@ -99,35 +110,71 @@ def on_launch(user_dir, data_dir=None):
 def set_on_launch(user_dir, value):
     d = _mod_settings(user_dir)
     d[ON_LAUNCH] = bool(value)
-    path = os.path.join(user_dir, MOD_SETTINGS)
+    path = _mod_settings_path(user_dir)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(d, f, indent=2)
 
 
+def remembered(data_dir):
+    """The launcher the player pointed us at (the install question's "I have it", or --beammp-launcher)."""
+    p = _settings(data_dir).get("launcher")
+    return p if isinstance(p, str) and p else None
+
+
+def remember(data_dir, path):
+    """Keep a launcher the player has elsewhere (a player's own build in a folder of their own was not found and they
+    did not want a second one, 2026-10-24). A folder is taken too (its launcher inside). Returns the path, or None
+    when there is no launcher there."""
+    path = os.path.abspath(os.path.expanduser((path or "").strip().strip('"').strip("'")))
+    if os.path.isdir(path):
+        inside = [os.path.join(path, *sub, EXE) for sub in ((), ("bin",), ("build",))]
+        path = next((p for p in inside if os.path.isfile(p)), path)
+    if not (os.path.isfile(path) and (IS_WIN or os.access(path, os.X_OK))):
+        return None
+    save_settings(data_dir, launcher=path)
+    return path
+
+
+# A launcher's folder: BeamMP-Launcher or BeamMP-Launcher-<version> only (a folder renamed aside,
+# BeamMP-Launcher.bak-..., was picked up, 2026-10-24); its program in the folder, bin/ (BeamMP's build steps) or build/
+LAUNCHER_DIR = re.compile(r"BeamMP-Launcher(-[0-9][0-9.]*)?", re.I)
+IN_DIR = ((), ("bin",), ("build",))
+
+
+def _launcher_dirs(parent):
+    return sorted(os.path.join(parent, d) for d in _listdir(parent) if LAUNCHER_DIR.fullmatch(d))
+
+
 def candidates(data_dir, env=None, home=None):
-    """Where a BeamMP launcher may be, in order: BEAMMP_LAUNCHER, BeamMP's own installer's folder (Windows), ours,
-    a build from source in the home folder, the PATH."""
+    """Where a BeamMP launcher may be, in order: BEAMMP_LAUNCHER, the one the player pointed us at, BeamMP's own
+    installer's folder (Windows), ours, the home folder (a build from source in BeamMP-Launcher[-<version>] in it or one
+    folder down, e.g. ~/Games, or ~/.local/share; the program itself in ~ or ~/.local/bin), the PATH."""
     env = os.environ if env is None else env
     home = home or os.path.expanduser("~")
     out = []
     if env.get("BEAMMP_LAUNCHER"):
         out.append(env["BEAMMP_LAUNCHER"])
+    if remembered(data_dir):
+        out.append(remembered(data_dir))
     if IS_WIN:
         appdata = env.get("APPDATA") or os.path.join(home, "AppData", "Roaming")
         out.append(os.path.join(appdata, "BeamMP-Launcher", EXE))
     out.append(os.path.join(data_dir, "beammp", EXE))
     if not IS_WIN:
-        out += [os.path.join(home, "BeamMP-Launcher", "bin", EXE), os.path.join(home, EXE),
-                os.path.join(home, ".local", "bin", EXE)]
-        # (BeamMP-Launcher or BeamMP-Launcher-<version> only: a folder renamed aside, BeamMP-Launcher.bak-..., was
-        # picked up, 2026-10-24)
-        out += sorted(p for p in (os.path.join(home, d, "bin", EXE) for d in _listdir(home)
-                                  if re.fullmatch(r"BeamMP-Launcher(-[0-9][0-9.]*)?", d)) if p not in out)
+        out += [os.path.join(home, EXE), os.path.join(home, ".local", "bin", EXE)]
+        parents = [home, os.path.join(home, ".local", "share")]
+        parents += sorted(os.path.join(home, d) for d in _listdir(home)
+                          if not d.startswith(".") and not LAUNCHER_DIR.fullmatch(d)
+                          and os.path.isdir(os.path.join(home, d)))
+        for parent in parents:
+            for d in _launcher_dirs(parent):
+                out += [os.path.join(d, *sub, EXE) for sub in IN_DIR]
     on_path = shutil.which(EXE)
     if on_path:
         out.append(on_path)
-    return out
+    seen = set()
+    return [p for p in out if not (p in seen or seen.add(p))]
 
 
 def _listdir(d):
@@ -145,8 +192,9 @@ def find(data_dir, env=None):
     found = [p for p in candidates(data_dir, env=env) if os.path.isfile(p) and (IS_WIN or os.access(p, os.X_OK))]
     if not found:
         return None
-    if env.get("BEAMMP_LAUNCHER") and found[0] == env["BEAMMP_LAUNCHER"]:
-        return found[0]
+    for chosen in (env.get("BEAMMP_LAUNCHER"), remembered(data_dir)):
+        if chosen and chosen in found:          # (the player's choice over any newer one)
+            return chosen
     return max(found, key=lambda p: os.path.getmtime(p))
 
 

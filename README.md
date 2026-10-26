@@ -155,10 +155,15 @@ to discuss the original project and find BeamMP.Earth servers. Please report iss
   traffic islands, roundabouts, rural motorways with shoulders and toll booths; the ground graded under them, with
   retaining walls where a road is cut into a hill (dry stone in the mountains and towns, concrete along major roads)
   and stone parapets along mountain roads' drops; street lights, utility poles with wires, traffic signals,
-  stop signs and speed-limit signs (mph or km/h by country).
+  stop signs and speed-limit signs (mph or km/h by country), traffic lights and sidewalks where OpenStreetMap maps them;
+  railway lines as 3D track (ballast, sleepers and rails, rail bridges on piers, the ground cut and filled for the
+  line) and tram tracks (street track where trams run on the road).
+- Gas stations with pumps, canopies and forecourts in the region's style, where the stock refuel prompt fills the
+  tank.
 - Bridges drawn as their real type (beam, truss, arch, cable-stayed, suspension) with real heights and spans, piers
-  that keep clear of the roads under them; tunnels through hills, with portals, lights and low arches where little
-  is over them.
+  that keep clear of the roads under them and 6 m (20 ft) of headroom over roads where the ground allows; a divided
+  road's two decks joined across a narrow median; tunnels through hills, with portals, lights and low arches where
+  little is over them.
 - Water: the sea with real depth (cars sink), lakes, and rivers kept beside the roads.
 - Airports with graded, marked runways; racetracks (circuits, ovals and pit lanes, with their real banking);
   landmarks such as the pyramids of Giza.
@@ -182,7 +187,11 @@ to discuss the original project and find BeamMP.Earth servers. Please report iss
 - Buildings, sidewalks, curbs and bridge decks are solid (lean collision meshes near the car keep the
   physics' collision rebuilds cheap).
 - Fast teleports: right after a teleport, while you wait, the world server may borrow some of the game's
-  CPU cores (at idle priority) to build the world faster (Linux; `--load-boost off` turns it off).
+  CPU cores (at idle priority) to build the world faster (Linux; `--load-boost off` turns it off). It builds
+  2 to 4 road pieces at once, by your computer's CPU threads and memory.
+- Places you've been load much faster the next time: what was built around you (roads, buildings, the levelled
+  ground, the distant land) is kept on disk, up to 2 GB (the oldest go first; the environment variable
+  `BNE_REVISIT_MB` sets the size, `BNE_REVISIT=off` turns it off).
 - **AI support**: the mod builds BeamNG's road graph (the AI's map) from the real roads around you, with
   lanes, one-way streets, speed limits (mapped, or the country's defaults), the country's driving side and
   road rules, and traffic signals at real junctions. The stock AI, traffic, police and the AI modes in the
@@ -192,19 +201,22 @@ to discuss the original project and find BeamMP.Earth servers. Please report iss
 
 **Multiplayer (BeamMP, in testing)**
 - Play the real world together on a BeamMP server (every player runs the BeamNG.Earth app, which starts BeamMP with
-  the game): BeamNG.Earth servers have their own **BeamNG.Earth** tab in BeamMP's server browser, players who join are
+  the game): BeamNG.Earth servers are their own **BeamNG.Earth** category in BeamMP's server browser, players who join are
   sent to the others, cars show in the right place and with their crash damage in everyone's world, and other players
   show on the world map (see "Multiplayer" below).
 
 **Map and navigation**
 - A level select with famous places and a **Random location** button (it starts you on a road).
 - World map (**M**): pan and zoom the globe, satellite or street map (EOX) with a roads & labels overlay,
-  borders and place names (the **Layers** button), search for addresses and places as you type, teleport
-  anywhere. Works with a controller, laid out like the stock map.
+  borders and place names (the **Layers** button), search for addresses and places as you type (names in the
+  local language in German-, French- and Italian-speaking countries), teleport anywhere. Works with a controller,
+  laid out like the stock map.
 - GPS routes to any destination (OSRM on OpenStreetMap), with the stock route arrows on the road and the route
-  on the game's minimap (bottom left), which shows the roads around you.
+  on the game's minimap (bottom left), which shows the roads around you. The first 20 km (12 miles) of the
+  route's map data and elevation download ahead while you drive, with a progress bar on the map.
 - **Autodrive**: the car drives itself along the GPS route (in lane, legal speed, minding traffic).
-- Saved places and recent places.
+- Saved places and recent places; "Where you left off" in the level select puts you back where you last drove (it
+  is saved as you drive, at teleports and when the game closes).
 
 **Interface and tools**
 - A slim status bar (street, town, country, and under it the loading progress of the ground, roads & buildings, trees and
@@ -280,6 +292,16 @@ the source: unzip it over the old folder and run the installer again).
 downloaded file (or this folder); the map cache is `.cache/beamng-earth` in your home folder (`~/.cache/beamng-earth` on Linux,
 `C:\Users\<you>\.cache\beamng-earth` on Windows).
 
+**The map cache on another drive:** in the game, settings page > Download cache > **Cache folder**: **Change...** opens
+your system's folder window, or type or paste a folder and press **Use**. Or start the app once with `--cache-dir PATH`
+(e.g. a shortcut to `BeamNG.Earth-<version>.exe --cache-dir "D:\BeamNG.Earth cache"`). It is used from the next start
+and remembered; `default` goes back. Move the old cache folder there first to keep what is already downloaded.
+
+**BeamNG.drive installed somewhere else** (not in a Steam library the app finds, e.g. another launcher): the app asks
+where it is the first time (Enter opens your system's folder window, or type or paste the folder) and remembers it;
+`--game-dir PATH` sets it too, `--game-dir default` forgets it. A game folder outside Steam is started directly. On
+Linux, BeamMP's launcher finds the game only in Steam's libraries, so BeamMP isn't started with such a copy.
+
 More detail (traffic, the status bar, reporting problems, troubleshooting): [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 **Compute sharing (optional, for tinkerers):** another computer on your network can build part of the distant
@@ -353,18 +375,21 @@ BeamNG.Earth runs on [BeamMP](https://beammp.com/) servers (in testing): drive t
 **Joining a server**
 1. Start the BeamNG.Earth app (the same version as the server's). It starts BeamMP with the game: the official BeamMP
    launcher, unchanged (BeamMP's code is AGPL-3.0, [github.com/BeamMP](https://github.com/BeamMP)). If BeamMP isn't
-   installed, the app asks once: **Yes / No / Don't ask again**.
+   installed, the app asks once: **Yes / No / Don't ask again / Have it already** (the last one asks where your
+   launcher is: Enter opens your system's file window, or type or paste the path; `--beammp-launcher PATH` sets it
+   too, and it is kept for the next starts). To change it later: settings page > Multiplayer > **BeamMP launcher**.
    - **Windows:** Yes downloads BeamMP's official launcher from BeamMP's GitHub releases (checked against the checksum
      BeamMP publishes; Windows Firewall then asks once whether it may use the network: allow it).
    - **Linux and Steam Deck:** BeamMP publishes no Linux download, so Yes builds its launcher on your computer from
      BeamMP's source, the newest version that passed BeamMP's own tests, in an Ubuntu container (podman or docker:
      SteamOS has podman; about a minute on a Steam Deck). A launcher you built yourself is used when found
-     (`~/BeamMP-Launcher`, or set `BEAMMP_LAUNCHER`).
+     (a `BeamMP-Launcher` folder in your home folder or one folder down, e.g. `~/Games/BeamMP-Launcher`, or
+     `~/.local/share`; or answer "Have it already", or set `BEAMMP_LAUNCHER`).
    - The setting **Start BeamMP with BeamNG.Earth** (Pause menu > Mods > BeamNG.Earth, Multiplayer) turns this off or
      back on; `--no-beammp` starts the game without BeamMP once.
 2. In the game: main menu > More > BeamMP, log in (an account or a guest).
-3. Open the **BeamNG.Earth** tab in BeamMP's sidebar: the servers running BeamNG.Earth, with a Join button. They are
-   listed only there, for players who have BeamNG.Earth. A private server: Direct Connect with its address (the
+3. Pick the **BeamNG.Earth** category in BeamMP's server browser: the servers running BeamNG.Earth (search,
+   filters, favorites and details as for the other servers), the official server at the top. They are listed only there, for players who have BeamNG.Earth. A private server: Direct Connect with its address (the
    [Discord server](https://discord.gg/tgf) has some). Every player needs the BeamNG.Earth app running: each builds the
    world on their own computer.
    (Starting the BeamMP launcher yourself first still works: the app then starts just the world server.)
@@ -393,10 +418,12 @@ trust with the group's credentials. No manual `BNGE_PEER_TOKEN` is needed for Be
 (`BeamNG.Earth-README.md`). In short: unzip it into a BeamMP server's folder, set
 `Map = "/levels/beamng_earth/info.json"` in `ServerConfig.toml`, forward the server's port (TCP and UDP) for players
 over the internet, and start it (its log shows `[BeamNG.Earth] plugin loaded`). Which list it is on:
-`Private = false` with your AuthKey puts it on the BeamNG.Earth list (the in-game tab) and the plugin keeps it off
+`Private = false` with your AuthKey puts it on the BeamNG.Earth list (the in-game category) and the plugin keeps it off
 BeamMP's own public list, so players without BeamNG.Earth never see it; `Private = true`, or no AuthKey: on no list,
 players use Direct Connect. The plugin lists the server once a minute with `curl` (Linux, and Windows 10 and later).
-Update the server zip with every release: it carries the mod the server sends to players. The players' sharing port (47621) is
+Update the server zip with every release: it carries the mod the server sends to players. The server's time and weather for everyone
+(`G.TIME`: real or a fixed / running time such as `'20:30'`; `G.WEATHER`: real or clear, cloudy, rain, storm, snow,
+fog) are set near the top of `Resources/Server/BeamNGEarth/main.lua`. The players' sharing port (47621) is
 `G.SHARE_PORT` near the top of `Resources/Server/BeamNGEarth/main.lua`. The server needs no world data and
 little CPU. From the source, `python3 tools/package.py --beammp` builds the same zip.
 

@@ -150,6 +150,15 @@ local function vehicle(gid)
   return o and o.setActive and o or nil         -- (vehicles only)
 end
 
+-- BeamMP's name tag of a car switched off here hidden with it (BeamMP draws the tags of every car it knows, switched
+-- off or not: a "guest" tag floated over an empty road, Discord 2026-10-24). Its own per-car flag, hideNametag
+-- (MPVehicleGE's tag loop skips it), on its own record of the car: no file of BeamMP's changed.
+function M.nametag(gid, hidden)
+  local mp = rawget(_G, 'MPVehicleGE')
+  local ok, v = pcall(function() return mp and mp.getVehicleByGameID and mp.getVehicleByGameID(gid) end)
+  if ok and type(v) == 'table' then v.hideNametag = hidden or nil end
+end
+
 -- Test switch (two BeamMP players, .claude/work/mp_two.sh): the game's start arguments -bngetest car,damage
 -- spawn a car TEST_CAR_S after the first pose with none, damage it TEST_DAMAGE_S after that; the status file then
 -- lists the other players' cars' broken beams (the damage they show here). 'switch': TEST_SWITCH_S after the car,
@@ -445,6 +454,23 @@ local function onConfig(data)
   if not ok or type(d) ~= 'table' then return end
   config = d
   log('I', 'beamngEarth', 'BeamMP: the server\'s sharing port ' .. tostring(d.sharePort))
+  M.applyServerSky(d)
+end
+
+-- The server's time and weather (its plugin's G.TIME / G.WEATHER, in bngeConfig): { time = { hours, speed, epoch } or
+-- nil (the real clock), weather = a preset name or nil (the real weather) }. A player who set Sky or Weather to
+-- Manual keeps their own (the sky and weather only follow the server in their 'real' mode).
+function M.applyServerSky(d)
+  local sk, wx = rawget(_G, 'beamngEarth_sky'), rawget(_G, 'beamngEarth_weather')
+  local time = type(d) == 'table' and type(d.time) == 'table' and d.time or nil
+  local weather = type(d) == 'table' and type(d.weather) == 'string' and d.weather or nil
+  if sk and sk.setServerClock then pcall(sk.setServerClock, time) end
+  if wx and wx.setPreset then pcall(wx.setPreset, weather) end
+  if time or weather then
+    log('I', 'beamngEarth', string.format('BeamMP: the server\'s time %s, weather %s',
+      time and string.format('%05.2f h x%g', tonumber(time.hours) or 0, tonumber(time.speed) or 0) or 'real',
+      weather or 'real'))
+  end
 end
 
 -- Pure: the port our world server shares on: the BeamMP server's (bngeConfig) when it is a usable one, else nil.
@@ -507,25 +533,42 @@ onGoToRef = onGoTo
 -- No car yet (BeamMP joins without one): the free camera, left at the level's spawn point under the generated
 -- ground, put once on the ground at the origin (where the vehicle selector spawns the car); and lifted back over the
 -- ground whenever it is under it (a teleport moves the world under a free camera: from a valley to a mountain it
--- ended 1400 m underground, a black screen).
-local function placeCamera(player)
-  if (getPlayerVehicle and getPlayerVehicle(0)) or not be or not be.getSurfaceHeightBelow then return end
+-- ended 1400 m underground, a black screen). A teleport (the join's to the other players, or the map's) does not move
+-- a free camera either way: onto lower ground it was left hundreds of metres up, and the car the vehicle selector
+-- spawns there (at the camera) fell from it (the user, 2026-10-24: "sometimes i spawn high above the ground in
+-- beammp"); so on each new anchor it is put on the ground again, 3 m over it.
+local goTo = nil            -- after a teleport with no car: { from = the anchor key then, x, y = its target there }
+local seenKey = nil         -- the anchor (M.key) of the latest placeCamera call
+local function placeCamera(player, anchorKey)
+  seenKey = anchorKey or seenKey
+  if (getPlayerVehicle and getPlayerVehicle(0)) or not be or not be.getSurfaceHeightBelow then goTo = nil return end
   local x, y = 0, -8
-  if camPlaced then
+  local moved = goTo ~= nil and anchorKey ~= nil and anchorKey ~= goTo.from      -- (the teleport's anchor is in)
+  if moved then
+    x, y = goTo.x, goTo.y
+  elseif camPlaced then
     if not player or not player.x then return end
     x, y = player.x, player.y
   end
   local z = be:getSurfaceHeightBelow(vec3(x, y, 9000))
   if type(z) ~= 'number' or z < -1e5 then return end      -- (the ground not there yet)
-  if camPlaced and player.z >= z - 0.5 then return end
+  if camPlaced and not moved and player.z >= z - 0.5 then return end
   camPlaced = true
+  if moved then goTo = nil end
   local q = quatFromDir(vec3(0, 1, -0.15), vec3(0, 0, 1))
   if core_camera and core_camera.setPosRot then core_camera.setPosRot(0, x, y, z + 3, q.x, q.y, q.z, q.w) end
 end
 
+-- A teleport asked (core.teleportTo): with no car the camera goes to its target (x, y in the new anchor's frame) once
+-- that anchor is in. A rebase does not come here (a free camera flown far keeps its height).
+function M.onTeleport(x, y)
+  goTo = { from = seenKey or '', x = tonumber(x) or 0, y = tonumber(y) or 0 }
+end
+M.placeCamera = placeCamera     -- (tests)
+
 -- BeamMP's join done (core.lua onBeamMPPostJoin): the first pose asks the plugin where the others are.
 function M.onPostJoin()
-  joined, wentTo, camPlaced = true, false, false
+  joined, wentTo, camPlaced, goTo = true, false, false, nil
   mapVisible = false
   socialRoster = nil
   anchors = {}
@@ -541,7 +584,9 @@ end
 -- some: the car is reset (RESET_PHYSICS: BeamMP's positionVE puts it back on its next packet) and the state put on
 -- REPAIR_FRAMES frames later.
 M.REPAIR_FRAMES = 3
+M.BACK_ON_SETTLE_S = 2.0    -- a car switched off while far comes back on once its packets have come this long
 local nodesWrapped = nil   -- the nodesGE table wrapped (BeamMP reloading it makes a new one)
+local nodesBySid = {}       -- BeamMP vehicle id -> a full damage that came before its car was known here
 local pendingNodes = {}     -- game vehicle id -> { raw, frames } (the owner's state, applied after the reset)
 -- Copies checked again after damage of their own (2026-10-24, three players: a copy took 24 broken beams after its
 -- owner's full damage had come, the two cars still pushing into each other; the owner's damage barely moved, so it sent
@@ -571,19 +616,21 @@ local PRISTINE_VE = [[local n = 0 for _, b in pairs(v.data.beams) do if obj:beam
 -- copies of a car with none, an instability); the rest lengths in one step 159 more; grown in over 60 steps 39 more
 -- (the user chose this: "Breaks + morphed dents"). BeamNG 0.40 renamed beamstate.beamDeformed to onBeamDeformed.
 M.MORPH_STEPS = 60
+-- (its globals by rawset: a plain assignment of a new global in vehicle Lua logs a warning with a stack trace, every
+-- repair on a busy server)
 local APPLY_VE = [[local function applyDamage(d) if type(d) ~= 'table' then return end ]]
   .. [[for cid, n in pairs(d.nodes or {}) do if type(n) == 'table' and #n > 1 then obj:setNodeMass(tonumber(cid) - 1, n[2]) end end ]]
   .. [[local l0 = {} for cid, b in pairs(d.beams or {}) do local c = tonumber(cid) - 1 ]]
   .. [[if b[2] == true then if not obj:beamIsBroken(c) then obj:breakBeam(c) beamstate.beamBroken(c, 1) end ]]
   .. [[elseif not obj:beamIsBroken(c) then l0[c] = obj:getBeamRestLength(c) end end ]]
-  .. [[bngeDmg = { beams = d.beams or {}, l0 = l0 } ]]
+  .. [[rawset(_G, 'bngeDmg', { beams = d.beams or {}, l0 = l0 }) ]]
   .. [[obj:queueGameEngineLua("local m = package.loaded['beamngEarth/mpsession'] if m then m.startMorph(" .. obj:getID() .. ") end") end ]]
-  .. [[function bngeMorph(f) local s = bngeDmg if not s then return end ]]
+  .. [[rawset(_G, 'bngeMorph', function(f) local s = rawget(_G, 'bngeDmg') if not s then return end ]]
   .. [[local deformed = beamstate.onBeamDeformed or beamstate.beamDeformed ]]
   .. [[for cid, b in pairs(s.beams) do local c = tonumber(cid) - 1 local l0 = s.l0[c] ]]
   .. [[if l0 and not obj:beamIsBroken(c) then obj:setBeamLength(c, l0 + (b[1] - l0) * f) ]]
   .. [[if f >= 1 and b[3] > 0 and deformed then deformed(c, b[3]) end end end ]]
-  .. [[if f >= 1 then bngeDmg = nil end end ]]
+  .. [[if f >= 1 then rawset(_G, 'bngeDmg', nil) end end) ]]
 M.APPLY_VE = APPLY_VE        -- (tests)
 local REPAIR_VE = APPLY_VE .. [[local raw, apply = %s, %s local ok, d = pcall(jsonDecode, raw) local extra = 0 ]]
   .. [[if ok and type(d) == 'table' and type(d.beams) == 'table' then for _, b in pairs(v.data.beams) do ]]
@@ -615,16 +662,33 @@ function M.wrapNodes()
     if code ~= 'n' then return orig(rawData) end
     local mp = rawget(_G, 'MPVehicleGE')
     local v = mp and mp.getVehicles and mp.getVehicles()[sid]
-    if not v or v.isLocal then return orig(rawData) end
-    local gid = mp.getGameVehicleID(sid) or -1
-    local veh = vehicle(gid)
-    if not veh then return orig(rawData) end
+    if v and v.isLocal then return end          -- (our own car's: nothing to put on)
+    -- never BeamMP's own applyNodes: on BeamNG 0.40 it calls beamstate.beamDeformed, renamed, and the copy's vehicle Lua
+    -- stopped with a fatal error (a player's log, 2026-10-24: the message came as a far car came back on, before it
+    -- could be told apart here); a car not known yet keeps its state by its BeamMP id till it is (adoptNodes)
+    local gid = v and mp.getGameVehicleID and mp.getGameVehicleID(sid) or -1
+    if not vehicle(gid) then nodesBySid[sid] = data return end
     lastNodes[gid], stale[gid] = data, true   -- (put on once it is in range: checkCopies; nothing done with it till then)
     witnessed[gid] = within(gid, M.SYNC_FAR_M, camPos()) or nil
   end
   nodesWrapped = ng
   return true
 end
+
+-- The full damages that came before their cars were known here, put with their cars once they are (each frame).
+local function adoptNodes()
+  if not next(nodesBySid) then return end
+  local mp = rawget(_G, 'MPVehicleGE')
+  if not (mp and mp.getGameVehicleID) then return end
+  for sid, data in pairs(nodesBySid) do
+    local gid = mp.getGameVehicleID(sid) or -1
+    if vehicle(gid) then
+      nodesBySid[sid] = nil
+      lastNodes[gid], stale[gid] = data, true
+    end
+  end
+end
+M.adoptNodes = adoptNodes       -- (tests)
 
 -- (the copy's vehicle Lua) gid was reset for a repair: its owner's state goes on REPAIR_FRAMES frames later
 function M.afterRepairReset(gid, extra)
@@ -783,6 +847,7 @@ function M.update(dt, anchor, player)
   local mpanchor = require('beamngEarth/mpanchor')
   mpanchor.install()            -- (a no-op once installed, and until BeamMP's positionGE has loaded)
   M.wrapNodes()
+  adoptNodes()
   applyPendingNodes()
   stepMorphs()
   clock = clock + (dt or 0)
@@ -854,7 +919,16 @@ function M.update(dt, anchor, player)
         blk.partial, blk.partialSink, blk.partialLevel, blk.over = fs.partial, fs.partialSink, fs.partialLevel, fs.overBlock
       end
     end
-    pcall(jsonWriteFile, M.STATUS_FILE, { t = os.time(), block = blk, anchor = anchor and M.key(anchor.lat, anchor.lon) or nil,
+    -- (the real time and weather in the session: the sky's and weather's own state)
+    local skyNow, wxNow = nil, nil
+    local sk, wx = rawget(_G, 'beamngEarth_sky'), rawget(_G, 'beamngEarth_weather')
+    if sk and sk.status then local okS, v = pcall(sk.status) if okS then skyNow = v; v.manualBy = sk.manualBy end end
+    if wx and wx.getMode then
+      local okW, m = pcall(wx.getMode)
+      local okL, line = pcall(function() return wx.statusLine and wx.statusLine() end)
+      wxNow = { mode = okW and m or nil, line = okL and line or nil, manualBy = wx.manualBy }
+    end
+    pcall(jsonWriteFile, M.STATUS_FILE, { t = os.time(), block = blk, sky = skyNow, weather = wxNow, anchor = anchor and M.key(anchor.lat, anchor.lon) or nil,
       perf = perf, switch = next(switchLog) and switchLog or nil, away = next(awayLog) and awayLog or nil,
       anchors = anchors, stats = stats, hidden = hidden, remote = remote, own = own, player = player and { x = player.x,
       y = player.y, z = player.z, camera = player.camera } or nil }, true)
@@ -865,7 +939,7 @@ function M.update(dt, anchor, player)
     require('beamngEarth/net').send({ type = 'share', port = M.sharePort(config) })     -- the server's port
   end
   if not anchor then return end
-  placeCamera(player)
+  placeCamera(player, M.key(anchor.lat, anchor.lon))
   anchorRef = anchor
   testStep(dt)
   if not player then return end
@@ -906,6 +980,7 @@ function M.update(dt, anchor, player)
       local veh = vehicle(gid)
       if veh then
         veh:setActive(0)
+        M.nametag(gid, true)
         deactivated[gid] = true
         log('I', 'beamngEarth', string.format('BeamMP: car %s (%s) switched off here (%s)', tostring(gid),
           tostring(sids[gid]), mpanchor.isFar(sids[gid]) and 'far' or 'its owner\'s anchor not known'))
@@ -915,8 +990,13 @@ function M.update(dt, anchor, player)
   local tp = require('beamngEarth/terrainpatch')
   local now = clock
   for gid in pairs(deactivated) do
-    if hide[gid] then
+    if not vehicle(gid) then
+      deactivated[gid], waitGround[gid] = nil, nil      -- (gone: removed by the server or its owner)
+    elseif hide[gid] then
       waitGround[gid] = nil
+    elseif mpanchor.nearFor(sids[gid]) < M.BACK_ON_SETTLE_S then
+      -- (its packets in reach again only just: BeamMP's position sync settles first. Back on 0.5 s after its owner's
+      -- jump back, a pickup went unstable 0.9 s later on a 19-player server, 2026-10-24)
     else
       local veh = vehicle(gid)
       local x, y = mpanchor.lastPos(sids[gid])
@@ -937,13 +1017,19 @@ function M.update(dt, anchor, player)
           log('I', 'beamngEarth', string.format('BeamMP: car %s back on at %.0f, %.0f, z %.2f (our ground %.2f)',
             tostring(gid), x or 0, y or 0, pz or -1, gz or -1))
         end
+        M.nametag(gid, false)
         if veh then
           veh:setActive(1)
           -- BeamMP's own reset of its position sync (smoothers, the remote clock, a clean teleport onto the next
           -- packet): switched off a minute while its player teleported away and back (their car reset, its clock
           -- restarted), the car came back on with that state stale and two instabilities followed within 0.2 s, on the
-          -- right spot and height (a three-player test, 2026-10-24)
-          veh:queueLuaCommand('if positionVE and positionVE.onReset then positionVE.onReset() end')
+          -- right spot and height (a three-player test, 2026-10-24). Its physics reset first, as a freshly spawned car
+          -- (which BeamMP places stably): back on without it, a car floating off our block went unstable 0.8 s later,
+          -- every time (a player's 19-player session and the away test, 2026-10-24); the owner's damage goes on again
+          -- (lastNodes, once in range)
+          veh:queueLuaCommand('obj:requestReset(RESET_PHYSICS) if positionVE and positionVE.onReset then '
+            .. 'positionVE.onReset() end')
+          if lastNodes[gid] then stale[gid], applied[gid] = true, nil end
         end
         deactivated[gid], waitGround[gid] = nil, nil
       else
@@ -1029,6 +1115,7 @@ function M.reset()
   for gid in pairs(deactivated) do
     local veh = vehicle(gid)
     if veh then veh:setActive(1) end
+    M.nametag(gid, false)
   end
   for gid in pairs(floating) do
     local veh = vehicle(gid)
@@ -1036,6 +1123,8 @@ function M.reset()
   end
   floating = {}
   pendingNodes, lastNodes, copyBase, copySince, copyQuiet, stale, morphs, applied, witnessed = {}, {}, {}, {}, {}, {}, {}, {}, {}
+  nodesBySid = {}
+  M.applyServerSky(nil)       -- (the real time and weather again after a session with the server's)
   deactivated, anchors, poseIn, hideIn, joined, wentTo, camPlaced, lastPlayers = {}, {}, 0, 0, false, false, false, -1
   waitGround = {}
   members, sentDamage, damageSince, restoredAt, restores = {}, {}, {}, {}, {}

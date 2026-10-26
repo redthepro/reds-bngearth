@@ -250,6 +250,9 @@ class FetchError(IOError):
     def __init__(self, msg, url=None, host=None, retry_after=0.0, status=None):
         super().__init__(msg)
         self.url, self.host, self.retry_after, self.status = url, host, retry_after, status
+        if not isinstance(self, (NotFound, Deferred)):     # (no data there, a dropped prefetch: as it should be)
+            import revisit
+            revisit.fault()             # (a build that goes on without it is not kept)
 
 
 class NotFound(FetchError):

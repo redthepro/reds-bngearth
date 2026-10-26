@@ -65,8 +65,9 @@ def cell_name(px0, py0, side=PIECE_M):
 def build(frame, elev, box, prefix, step=STEP_M):
     """Write the patch for box (anchor-frame metres) as PIECE_M pieces, prefix + _<cell>.cdae each (collision only),
     named by their cell: a piece another patch of the same anchor already wrote is used as it is (the mod shares one
-    object per cell, and fewer distinct shape paths load). elev(lat, lon) -> the ground height in the anchor frame (as
-    the block's). Returns ([(path, (cx, cy))], triangles): each piece's file and centre, their triangles in all."""
+    object per cell, and fewer distinct shape paths load). elev(lat, lon) -> the ground's (geodetic) height, put in the
+    anchor frame's up here as the block's (heightmap.py): raw heights stood the patches over the ground drawn by the
+    Earth's curve, 7.8 m 10 km from the anchor, 18 m at the 15 km rebase (far cars on them seemed to float). Returns ([(path, (cx, cy))], triangles): each piece's file and centre, their triangles in all."""
     import cdae
     todo = []
     for px0, py0, px1, py1 in pieces(box):
@@ -77,7 +78,8 @@ def build(frame, elev, box, prefix, step=STEP_M):
         xs, ys = grid(box, step)
         gx, gy = np.meshgrid(xs, ys)
         la, lo, _ = frame.enu_to_geodetic(gx.ravel(), gy.ravel(), np.zeros(gx.size))
-        z = np.asarray(elev(la, lo), np.float64).reshape(gx.shape)
+        z = np.asarray(frame.geodetic_to_enu(la, lo, np.asarray(elev(la, lo), np.float64))[2],
+                       np.float64).reshape(gx.shape)
     per_piece = 2 * int(round(PIECE_M / step)) ** 2
     for path, (px0, py0, px1, py1), done in todo:
         cx, cy = (px0 + px1) / 2, (py0 + py1) / 2

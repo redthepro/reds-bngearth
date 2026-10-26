@@ -7,6 +7,9 @@
 local M = {}
 
 M.TIMEOUT_S = 12
+-- the official BeamNG.Earth servers, by address (a name anyone can choose): first in the list, in their own colour
+-- (earthServers.js)
+M.OFFICIAL = { ['5.161.253.210:30833'] = true }
 
 local net = require('beamngEarth/net')
 local waiting = nil         -- seconds since the request, while one is out
@@ -20,7 +23,10 @@ function M.toServers(list)
     if type(s) == 'table' and type(s.ip) == 'string' and tonumber(s.port) then
       out[#out + 1] = { ip = s.ip, port = math.floor(tonumber(s.port)), name = tostring(s.name or ''),
         players = tonumber(s.players) or 0, maxPlayers = tonumber(s.maxPlayers) or 0,
-        version = tostring(s.version or ''), place = tostring(s.place or '') }
+        version = tostring(s.version or ''), place = tostring(s.place or ''),
+        official = M.OFFICIAL[s.ip .. ':' .. math.floor(tonumber(s.port))] == true,
+        -- the country of the server's address (the list service's GeoIP; "" unknown: BeamMP's "?" flag)
+        location = type(s.location) == 'string' and s.location:match('^%a%a$') and s.location:upper() or '' }
     end
   end
   return out
