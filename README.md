@@ -12,12 +12,13 @@ real curvature of the Earth.
 
 [Download this fork](https://github.com/redthepro/reds-bngearth/releases) ·
 [Report a fork issue](https://github.com/redthepro/reds-bngearth/issues) ·
-[Installation](#install-and-play) · [Social & voice](#social-and-voice-in-183) ·
+[Installation](#install-and-play) · [Social & voice](#social-and-voice-in-184) ·
+[Contributing with agents](#contributing-with-agents) ·
 [Changelog](CHANGELOG.md) · [Build status](https://github.com/redthepro/reds-bngearth/actions/workflows/release.yml)
 
-## Social and voice in 1.8.3
+## Social and voice in 1.8.4
 
-This release adds **nearby positional voice, a server-wide channel, and private groups** to the fork's
+The fork includes **nearby positional voice, a server-wide channel, and private groups** alongside its
 terrain and driving improvements. Audio capture, Opus encoding, playback, and spatial mixing run in native
 code in the companion. The downloadable Windows EXE and Linux AppImage include the voice client.
 
@@ -43,6 +44,11 @@ Release, close the panel, switch focus, or wait 10 seconds to stop it. **Audio d
 confirms capture from the selected input; another player hearing you confirms the full connection. Outside this
 explicit test or a granted push-to-talk press, microphone capture is idle. The driving HUD shows microphone use,
 your transmitting channel, and players you are hearing.
+
+**Verified in game:** local microphone capture was confirmed on Windows on 2026-10-26 using the device selector
+and microphone test. That confirms the input/capture path; testing with another player verifies reception and
+channel routing. Voice remains in development, and reports from different audio devices and multiplayer groups help.
+
 Create a private group there, invite players currently connected to this server, accept invitations, or leave;
 the owner can remove members. Invitations from disconnected players cannot be accepted.
 Groups support 16 members and invitations expire after 30 seconds. Voice is opt-in again after leaving
@@ -71,6 +77,14 @@ to the containers. See the [voice deployment guide](deploy/voice/README.md) for 
 The current companion uses Mumble's encrypted **TLS audio tunnel**; native UDP audio transport is future work.
 The deployment is configured for 100 players, but has not been load tested with 100 players.
 
+**Try the development server:** in the Earth server browser, search for **`github.com/reds-bngearth`**.
+The current server name is **`github.com/reds-bngearth - 1.8.4 Development Test`**. Use the matching companion
+version, then open **Pause → Mods → Earth Social & Voice** to enable voice and select your devices. After an
+update, close the old game and companion, start the new companion, and rejoin so both the native client and
+server-supplied mod are refreshed. Published builds are on [Releases](https://github.com/redthepro/reds-bngearth/releases);
+check [Actions](https://github.com/redthepro/reds-bngearth/actions/workflows/release.yml) if a newer development build
+is still being tested or compiled.
+
 ## What this fork changes
 
 Compared with upstream 1.6.3-beta:
@@ -96,8 +110,8 @@ Compared with upstream 1.6.3-beta:
   dawn, with distance fading and limits on how many lights are active or created at once.
 - **A curated Washington, DC landmark pack.** The Washington Monument, Lincoln Memorial, and White House use
   attributed models with reduced distance LODs, prepared textures, and bounded loading. Large mapped buildings
-  such as the Pentagon
-  retain their walls beneath rooftop parts and keep their courtyards open, including in collision geometry.
+  such as the Pentagon retain their walls beneath rooftop parts and keep their courtyards open, including in
+  collision geometry.
   Custom visuals retain mapped building collision; this is a first DC detail pass, with placement still needing
   in-game comparison against the surrounding terrain. See [landmark credits](CREDITS.md#bundled-dc-landmark-models).
 - **More resilient loading.** Invalid cached elevation blocks and map metadata are rebuilt, failed vegetation
@@ -137,6 +151,17 @@ with Linux (Vulkan) and Steam Deck. The retained [roadmap](docs/ROADMAP.md) docu
 to discuss the original project and find BeamMP.Earth servers. Please report issues with this fork in
 [this repository](https://github.com/redthepro/reds-bngearth/issues). You can support the original developer through
 [TecnaGamer's donation page](https://ko-fi.com/tecnagamer); that link supports upstream development.
+
+## Contributing with agents
+
+[AGENTS.md](AGENTS.md) explains the runtime boundaries, repository layout, development checks, upstream integration,
+releases and handling of live services. Repository skills live in [.agents/skills](.agents/skills) and cover
+streaming performance, world geometry, social/voice, releases, server operations and feature experiments.
+Agents should load the relevant skill for the task; contributors can use the same guides directly.
+
+New ideas are welcome. The [feature experiment skill](.agents/skills/bngearth-feature-lab/SKILL.md) describes how to
+turn an idea into a small prototype with a measurable outcome, a fallback and a path into the existing app.
+Experimental features should have clear status in the README and retain upstream attribution.
 
 ## Features (working today)
 **The world**
@@ -341,7 +366,7 @@ Player downloads: `python3 tools/build_app.py` builds this system's AppImage / .
 docstring; for the .exe run `tools/build_bootloader.py` first: a bootloader built from source, fewer antivirus
 false positives). Every push to `main` runs the Windows/Linux regression suites, compiles the Rust kernels,
 builds and smoke-tests both executables, and publishes a GitHub release with the matching BeamMP package and
-`SHA256SUMS.txt`. A version bump publishes its named release, such as **`v1.8.3`**. Other commits use
+`SHA256SUMS.txt`. A version bump publishes its named release, such as **`v1.8.4`**. Other commits use
 `v<VERSION>-build.<workflow-run-number>.g<commit-sha>`. The selected version is embedded in the downloads.
 Failed tests or builds prevent publication. Separate pushes keep their own builds; an older build finishing late
 cannot replace the current main build as Latest. Preview/alpha/rc versions remain prereleases.
@@ -402,7 +427,8 @@ BeamNG.Earth runs on [BeamMP](https://beammp.com/) servers (in testing): drive t
 Leaving a server turns BeamNG.Earth back on (joining one switches your other mods off).
 
 You are sent to where the others are. Cars show in the right place in everyone's world; other players show on the
-world map (**M**) as green arrows; players far away (another country) are hidden until you meet. Crash damage: a crash
+world map (**M**) as green arrows when they opt into map visibility; players far away (another country) are hidden
+until you meet. Crash damage: a crash
 you watch keeps the damage your own game worked out; a car that crashed out of your sight takes on its owner's damage
 (broken parts and dents) once it comes within about 0.6 miles.
 
@@ -420,8 +446,9 @@ trust with the group's credentials. No manual `BNGE_PEER_TOKEN` is needed for Be
 
 **Hosting a server:** download `BeamNG.Earth-BeamMP-Server-<version>.zip` from the
 [Releases](https://github.com/redthepro/reds-bngearth/releases) page and follow the guide inside
-(`BeamNG.Earth-README.md`). In short: unzip it into a BeamMP server's folder, set
-`Map = "/levels/beamng_earth/info.json"` in `ServerConfig.toml`, forward the server's port (TCP and UDP) for players
+(`BeamNG.Earth-README.md`). Stop BeamMP, unpack the release into a staging directory and run
+`python install_server.py --server-dir /path/to/BeamMP` to install/update its Earth resources with backups.
+Set `Map = "/levels/beamng_earth/info.json"` in `ServerConfig.toml`, forward the server's port (TCP and UDP) for players
 over the internet, and start it (its log shows `[BeamNG.Earth] plugin loaded`). Which list it is on:
 `Private = false` with your AuthKey puts it on the BeamNG.Earth list (the in-game category) and the plugin keeps it off
 BeamMP's own public list, so players without BeamNG.Earth never see it; `Private = true`, or no AuthKey: on no list,
@@ -433,7 +460,8 @@ fog) are set near the top of `Resources/Server/BeamNGEarth/main.lua`. The player
 little CPU. From the source, `python3 tools/package.py --beammp` builds the same zip.
 
 ## Data sources and attribution
-The repository contains only code; all map data is downloaded at runtime and cached locally.
+World map data is downloaded at runtime and cached locally. The repository also contains bundled, attributed
+landmark models and generated sign assets; see [CREDITS.md](CREDITS.md) for their sources and licenses.
 - Imagery: state and national orthophoto services where they are open (Maryland, a dozen more US
   states, Switzerland, France, Spain, the Netherlands, Germany's states, Poland (GUGiK), Japan, parts of Australia and
   Canada, and more), USDA NAIP and USGS The National Map (public domain) in the US, and Sentinel-2
