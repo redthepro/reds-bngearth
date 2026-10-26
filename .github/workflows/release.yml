@@ -35,13 +35,21 @@ jobs:
       publish: ${{ steps.v.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - id: v
         env:
           PUBLISH: ${{ github.event_name == 'push' || inputs.release }}
         run: |
           base=$(tr -d '[:space:]' < VERSION)
           [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || exit 1
-          v="$base-build.$GITHUB_RUN_NUMBER.g${GITHUB_SHA:0:12}"
+          previous=$(git show HEAD^:VERSION 2>/dev/null | tr -d '[:space:]' || true)
+          # A version bump publishes the named release; later commits keep unique build tags.
+          if [ "$previous" != "$base" ]; then
+            v="$base"
+          else
+            v="$base-build.$GITHUB_RUN_NUMBER.g${GITHUB_SHA:0:12}"
+          fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
           echo "Build $v from $GITHUB_SHA, publish: $PUBLISH"
@@ -164,6 +172,10 @@ jobs:
 
           Built from commit $GITHUB_SHA by workflow run $GITHUB_RUN_NUMBER.
           EOF
+          awk -v version="$(tr -d '[:space:]' < VERSION)" '
+            /^## / { if (found) exit; if ($2 == version) found=1 }
+            found { print }
+          ' CHANGELOG.md >> notes.md
           for platform in linux windows beammp; do
             (cd "out/$platform" && sha256sum *)
           done > SHA256SUMS.txt

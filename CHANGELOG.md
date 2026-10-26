@@ -2,6 +2,25 @@
 
 What changed in each release of BeamNG.Earth, newest first.
 
+## 1.8.0 (2026-10-25)
+
+- Added opt-in multiplayer voice: 80 m positional proximity, server-wide, and private groups.
+  Native CPAL capture/playback and bundled Opus run outside the game's Lua and terrain queues.
+  Default push-to-talk keys are Alt+V, Alt+N and Alt+B; controls can be rebound.
+- Added in-game audio devices, per-channel volumes, player mutes, speaking indicators, private
+  group creation, owner invitations/removal, and accepting/leaving groups. Voice opt-in resets
+  when leaving multiplayer. Capture/transmission leases stop stale push-to-talk requests.
+- Added a self-hosted Mumble service for Olympus with session credentials, private group ACLs,
+  certificate pinning, bounded audio queues, and a supervisor that stops the listener if its
+  authenticator fails. The first client transport uses Mumble's encrypted TLS audio tunnel.
+  Voice uses port 64738 TCP/UDP alongside the game's 30814 TCP/UDP.
+- Added Windows/Linux native audio builds, headless codec and policy tests, Lua controls/groups
+  tests, and synthetic live routing tests covering all channels and rejected outsider access.
+- Fixed Windows CI test scheduling races and progress waits. Cross-platform tests, executable
+  builds, packaged startup checks and release publication are green for the preceding build.
+- Retains 1.7.0's adaptive high-speed terrain loading, native AVX2/AVX-512 elevation sampling,
+  road and lighting improvements, and attributed DC landmark pack.
+
 ## 1.7.0 (2026-10-25)
 
 - Added an attributed DC landmark pack with compiled distance LODs for the Washington Monument, Lincoln Memorial,

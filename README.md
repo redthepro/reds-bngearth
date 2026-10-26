@@ -2,7 +2,7 @@
 
 This is [redthepro/reds-bngearth](https://github.com/redthepro/reds-bngearth), a fork of
 [TecnaGamer's BeamNG.Earth](https://github.com/TecnaGamer/BeamNG.Earth) focused on terrain loading,
-driving quality, and reliability. **Version 1.7.0 includes upstream 1.6.2-beta plus the changes below.**
+driving quality, and reliability. **Version 1.8.0 includes upstream 1.6.2-beta plus the changes below.**
 The original streamed world, map data integration, and BeamMP foundation come from TecnaGamer and the
 upstream contributors.
 
@@ -53,7 +53,8 @@ Compared with upstream 1.6.2-beta:
   that staged updates belong to the same repository.
 - **Automated builds for every main commit.** Windows and Linux regression tests gate compilation and packaged
   startup checks. Successful pushes publish a Windows EXE, Linux AppImage, matching BeamMP server ZIP, and
-  `SHA256SUMS.txt`, under a release tag containing the version, workflow run, and commit.
+  `SHA256SUMS.txt`. Version bumps publish named releases; other commits get a tag containing the workflow run
+  and commit.
 - **Optional multiplayer voice.** Nearby positional, server-wide, and private-group push-to-talk channels run
   through a self-hosted Mumble service and native CPAL/Opus audio in the companion. In-game controls include
   devices, channel volumes, player mutes, group invitations and speaking indicators. Voice is disabled until
