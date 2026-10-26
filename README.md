@@ -12,7 +12,41 @@ real curvature of the Earth.
 
 [Download this fork](https://github.com/redthepro/reds-bngearth/releases) ·
 [Report a fork issue](https://github.com/redthepro/reds-bngearth/issues) ·
-[Installation](#install-and-play) · [Changelog](CHANGELOG.md)
+[Installation](#install-and-play) · [Voice chat](#multiplayer-voice-in-180) ·
+[Changelog](CHANGELOG.md) · [Build status](https://github.com/redthepro/reds-bngearth/actions/workflows/release.yml)
+
+## Multiplayer voice in 1.8.0
+
+This release adds **nearby positional voice, a server-wide channel, and private groups** to the fork's
+terrain and driving improvements. Audio capture, Opus encoding, playback, and spatial mixing run in native
+code in the companion. The downloadable Windows EXE and Linux AppImage include the voice client.
+
+Join a BeamMP server with Earth voice enabled, open **BeamNG.Earth settings**, and enable voice for that
+session. Choose your microphone/output and adjust each channel's volume there. Hold a key to talk:
+
+| Channel | Default key | Who hears you |
+| --- | --- | --- |
+| Nearby | **Alt+V** | Players within 80 m, with distance fading and stereo direction |
+| Server | **Alt+N** | Players connected to the server's voice service |
+| Group | **Alt+B** | Members of your private group |
+
+Keys can be rebound in Controls. The settings page includes player mutes and speaking indicators.
+Create a private group there, invite players, accept invitations, or leave; the owner can remove members.
+Groups support 16 members and invitations expire after 30 seconds. Voice is opt-in again after leaving
+multiplayer; releasing the key or losing game focus stops transmission.
+
+**Hosting:** the matching BeamMP server ZIP includes `VoiceService/` with the self-hosted Mumble service
+and setup instructions. Players use the companion; a separate Mumble app is not required.
+
+| Service | Default host ports |
+| --- | --- |
+| BeamMP game | **30814 TCP + UDP** |
+| Voice | **64738 TCP + UDP** |
+
+The server host forwards these ports to its server machine. Voice authentication/control stays private
+to the containers. See the [voice deployment guide](deploy/voice/README.md) for setup and limits.
+The current companion uses Mumble's encrypted **TLS audio tunnel**; native UDP audio transport is future work.
+The deployment is configured for 100 players, but has not been load tested with 100 players.
 
 ## What this fork changes
 
@@ -249,16 +283,25 @@ authenticated and replay-protected, but not encrypted, so use a trusted network.
    streams the world; the status bar at the top shows where you are and the loading, **M** opens the
    world map (search, teleport, GPS routes, Autodrive).
 
+**Voice from source:** install CMake (`python -m pip install cmake`) and, on Linux, ALSA development
+headers (`libasound2-dev` on Debian/Ubuntu). Run `python tools/build_native.py` to build the terrain and
+native audio modules. Opus is bundled by the Rust build. The `--windows` cross-build option builds
+the terrain module; build the audio module on Windows, as the Windows release job does.
+
 Player downloads: `python3 tools/build_app.py` builds this system's AppImage / .exe (PyInstaller; see its
 docstring; for the .exe run `tools/build_bootloader.py` first: a bootloader built from source, fewer antivirus
 false positives). Every push to `main` runs the Windows/Linux regression suites, compiles the Rust kernels,
 builds and smoke-tests both executables, and publishes a GitHub release with the matching BeamMP package and
-`SHA256SUMS.txt`. No version bump is required: releases use
-`v<VERSION>-build.<workflow-run-number>.g<commit-sha>`, and that version is embedded in the downloads.
+`SHA256SUMS.txt`. A version bump publishes its named release, such as **`v1.8.0`**. Other commits use
+`v<VERSION>-build.<workflow-run-number>.g<commit-sha>`. The selected version is embedded in the downloads.
 Failed tests or builds prevent publication. Separate pushes keep their own builds; an older build finishing late
 cannot replace the current main build as Latest. Preview/alpha/rc versions remain prereleases.
 Manual Actions runs build downloadable artifacts by default; select **release** to publish them too.
 The workflow uses GitHub's built-in token with release write access confined to the publishing job.
+GitHub requires separate workflow-write authorization to backfill a commit whose workflow files differ
+from current `main`; its built-in Actions token cannot provide that permission. Such historical builds
+can be published from their tested artifacts using an authorized maintainer login. See
+[GitHub's release permissions](https://docs.github.com/en/rest/releases/releases#create-a-release).
 Release zip of the source: `python3 tools/package.py`.
 
 Tests: `python3 tools/run_tests.py` and `python3 tools/run_lua_tests.py` (install LuaJIT, or `pip install lupa`
