@@ -45,8 +45,10 @@ function M.uiState()
   return { options=options, status=status, state=state, me=config and config.me or '', available=config ~= nil }
 end
 function M.reset()
+  local hadVoice = config ~= nil or enabled
+  enabled, options.enabled = false, false
   held, config, state, status = {}, nil, {}, {}
-  net.send({type='voice',action='reset'})
+  if hadVoice then send('control',options); net.send({type='voice',action='reset'}) end
 end
 function M.update(dt, anchor, player, inSession, focused)
   if not handlers and rawget(_G,'AddEventHandler') then

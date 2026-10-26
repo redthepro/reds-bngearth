@@ -237,6 +237,7 @@ const voice = ref({})
 const voiceOptions = ref({ enabled: false, volumes: [1, 1, 1], muted: [], input: '', output: '' })
 let voiceTimer = null
 let voiceInitialized = false
+let voiceWriteAt = 0
 function refreshVoice() {
   engineLua('beamngEarth and beamngEarth.voiceState() or nil', data => {
     if (!data) return
@@ -249,9 +250,11 @@ function refreshVoice() {
         volumes: array(data.options.volumes).length === 3 ? data.options.volumes : [1, 1, 1] }
       voiceInitialized = true
     }
+    if (data.options && Date.now() - voiceWriteAt > 1000) voiceOptions.value.enabled = data.options.enabled === true
   })
 }
 function setVoice() {
+  voiceWriteAt = Date.now()
   const encoded = JSON.stringify(JSON.stringify(voiceOptions.value))
   engineLua(`if beamngEarth then beamngEarth.voiceControl(${encoded}) end`)
 }
