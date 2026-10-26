@@ -1,0 +1,43 @@
+[Unit]
+Description=BeamMP.Earth development server
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Container]
+Image=localhost/beammp-earth:3.9.3
+Pull=never
+ContainerName=beammp-earth
+UserNS=keep-id
+User=1000
+Group=1000
+WorkingDir=/server
+Volume=%h/beamng-earth-server/data:/server:Z
+PublishPort=0.0.0.0:30814:30814/tcp
+PublishPort=0.0.0.0:30814:30814/udp
+ReadOnly=true
+ReadOnlyTmpfs=true
+NoNewPrivileges=true
+DropCapability=all
+PidsLimit=512
+PodmanArgs=--cpus=4 --memory=4g --memory-swap=4g
+HealthCmd=/usr/local/bin/beammp-healthcheck
+HealthInterval=30s
+HealthStartPeriod=60s
+HealthRetries=3
+HealthTimeout=5s
+HealthOnFailure=kill
+StopTimeout=30
+LogDriver=journald
+
+[Service]
+ExecCondition=/usr/bin/python3 %h/beamng-earth-server/set_auth_key.py --check
+Restart=always
+RestartSec=10
+TimeoutStartSec=180
+TimeoutStopSec=45
+UMask=0077
+
+[Install]
+WantedBy=default.target

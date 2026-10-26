@@ -35,6 +35,8 @@ jobs:
         run: python tools/build_native.py
       - name: Server list service regression tests
         run: cargo test --manifest-path native/serverlist/Cargo.toml --locked
+      - name: BeamMP port mapping maintenance regression
+        run: python deploy/beammp-olympus/test_upnp_renew.py
       - name: Python regression suite
         run: python tools/run_tests.py --par 2 --timeout 1500
       - name: Lua regression suite

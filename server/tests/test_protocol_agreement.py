@@ -39,7 +39,9 @@ docs/V1_2_DESIGN.md §7 as amended by §12; server/README.md documents the same 
     page's cap values are the settings schema's;
   - live retexture (--colormatch / --deshadow): the 'far_retex' message (additive the same way), sent
     in a session whose colour-match regions turn ready once the far field is shown; core.lua hands it
-    to farfield.onRetex, which reads anchorId / key / texture.
+    to farfield.onRetex, which reads anchorId / key / texture;
+  - bundled landmarks: complete desired-set snapshots, including empty sets and the actual installed
+    DC catalog after a rebase; every nested row field and the mod's consumer agree with the contract.
 """
 import json
 import math
@@ -67,6 +69,7 @@ import earthd  # noqa: E402
 import farfield as ff  # noqa: E402
 import heightmap  # noqa: E402
 import imagery  # noqa: E402
+import landmarks as landmarksmod  # noqa: E402
 import modsim  # noqa: E402
 import test_retex  # noqa: E402
 import test_server  # noqa: E402
@@ -143,6 +146,9 @@ TERRAIN = {"cx": F(NUM), "cy": F(NUM), "heightmap": F(str), "size": F(int), "squ
            "layers": F(list, OPT), "materials": F(list, OPT),     # --surface on (surface.py)
            "base": F(str, OPT), "baseSize": F(NUM, OPT),           # --near-visual detail: the block's photo
            "ter": F(str, OPT)}                                     # the block as a .ter (swapped in, no import)
+LANDMARK_ROW = {"id": F(str), "title": F(str), "lat": F(NUM), "lon": F(NUM),
+                "shape": F(str), "materials": F(str), "height_m": F(NUM),
+                "x": F(NUM), "y": F(NUM), "z": F(NUM)}
 SERVER_TO_MOD = {
     "server_list": {"servers": F(list, OPT), "error": F(str, OPT)},   # earthd.server_list (the list service)
     "geocode_result": {"id": F(int), "results": F(list), "error": F(str, OPT)},   # geocode.py (Photon)
@@ -211,6 +217,8 @@ SERVER_TO_MOD = {
     # the water near the player (--sea on): tiles [key, x, y, z, size, nx, ny] (seatiles.py), rivers
     # [key, kind, flow m/s, [[x, y, z, width, depth], ...]] (riverlines.py)
     "sea": {"anchorId": F(int), "tiles": F(list), "rivers": F(list)},
+    # complete desired set of installed persistent actors; positions are in this committed anchor's frame
+    "landmarks": {"anchorId": F(int), "rows": F(list)},
     # data credits for the tiles around the player (credits.py; additive, protocol 4, --credits on)
     "credits": {"v": F(int), "near": F(str), "far": F(str), "ids": F(list), "farIds": F(list)},
     # the loading line's counts (Connection.send_progress, the mod's loadprogress.lua): [done, wanted] each
@@ -324,7 +332,8 @@ def mod_sends():
 def mod_reads():
     """Fields the mod reads from server messages: msg.X / p.msg.X / tr.X (terrain) in its Lua."""
     out = set()
-    for name in ("core.lua", "farfield.lua", "lattice.lua", "weather.lua", "credits.lua", "roads.lua", "mpsession.lua"):
+    for name in ("core.lua", "farfield.lua", "lattice.lua", "weather.lua", "credits.lua", "roads.lua", "mpsession.lua",
+                 "landmarks.lua"):
         text = (LUA / name).read_text(encoding="utf-8")
         out |= set(re.findall(r"\bmsg\.(\w+)", text))
         out |= {"terrain." + f for f in re.findall(r"\btr\.(\w+)", text)}
@@ -369,6 +378,14 @@ class AgreementTableTest(unittest.TestCase):
         sent |= {"terrain." + f for f in TERRAIN}
         unknown = mod_reads() - sent
         self.assertFalse(unknown, f"the mod reads fields no server message has: {sorted(unknown)}")
+
+    def test_landmark_rows_read_by_mod_are_in_table(self):
+        body = lua_function((LUA / "landmarks.lua").read_text(encoding="utf-8"), "onMessage")
+        fields = set(re.findall(r"\brow\.(\w+)", body))
+        self.assertTrue(fields)
+        self.assertLessEqual(fields, set(LANDMARK_ROW))
+        core = (LUA / "core.lua").read_text(encoding="utf-8")
+        self.assertRegex(core, r"t == 'landmarks' then\s+landmarks\.onMessage\(msg, st\.anchorId, st\.anchor\)")
 
 
 class SessionsAgreementTest(test_server.ServerHarness):
@@ -739,6 +756,9 @@ class ServerMessagesTest(test_server.ServerHarness):
     """Everything the server sends in a session, checked against SERVER_TO_MOD."""
 
     def setUp(self):
+        # Outside DC the live tracker emits rows=[] only when a catalog is installed. Do not let
+        # missing packaged assets silently remove this message from the agreement exercise.
+        self.assertTrue(landmarksmod.catalog(), "the bundled landmark catalog must be installed")
         super().setUp()
         self.server.weather = weather.Service(fetch=test_weather.FakeFetch())     # no network
         self.server.gravity = gravitymod.Provider(model=gravitymod.GravityModel.from_npz(GRAVITY_FIXTURE),
@@ -766,6 +786,28 @@ class ServerMessagesTest(test_server.ServerHarness):
             self.assertIsInstance(m[f], types, (f, m))
             if isinstance(m[f], float):
                 self.assertTrue(math.isfinite(m[f]), (f, m))
+        if kind == "landmarks":
+            self.assertLessEqual(len(m["rows"]), landmarksmod.MAX_MODELS)
+            ids = set()
+            for row in m["rows"]:
+                self.assertIsInstance(row, dict)
+                self.assertEqual(set(row), set(LANDMARK_ROW), row)
+                for f, (types, _) in LANDMARK_ROW.items():
+                    self.assertIn(type(row[f]), types, (f, row))  # bool is not a coordinate
+                    if isinstance(row[f], NUM):
+                        self.assertTrue(math.isfinite(row[f]), (f, row))
+                self.assertRegex(row["id"], r"^[a-z0-9_-]{1,64}$")
+                self.assertNotIn(row["id"], ids)
+                ids.add(row["id"])
+                self.assertLessEqual(len(row["title"]), 200)
+                self.assertTrue(-90 <= row["lat"] <= 90)
+                self.assertTrue(-180 <= row["lon"] <= 180)
+                self.assertTrue(0.01 <= row["height_m"] <= 2000)
+                for field, suffix in (("shape", ".cdae"), ("materials", ".materials.json")):
+                    self.assertTrue(row[field].startswith(landmarksmod.VFS + row["id"] + "/"), row)
+                    self.assertTrue(row[field].endswith(suffix), row)
+                    self.assertNotIn("..", row[field])
+                    self.assertNotIn("\\", row[field])
         if kind == "far_tile":
             self.assertRegex(m["shape"], SHAPE_RE)
             self.assertIn(m["state"], ("group", "prefetch"))
@@ -937,6 +979,61 @@ class ServerMessagesTest(test_server.ServerHarness):
         self.assertEqual((w, h, fourcc), (self.server.tex_size(m["level"]),) * 2 + (b"DXT1",))
         self.assertEqual(mips, w.bit_length())                 # full chain down to 1 x 1
         self.assertEqual(len(data), imagery.DDS_HEADER + sum(sizes))
+
+
+class LandmarkMessagesTest(test_server.ServerHarness):
+    """Real installed assets through Connection -> framed TCP, with a synthetic offline DEM."""
+    check = ServerMessagesTest.check
+
+    def test_populated_catalog_rows_and_rebase(self):
+        catalog = landmarksmod.catalog()
+        self.assertTrue(catalog, "an empty catalog must not bypass the wire contract")
+        self.hello()
+        lat, lon = catalog[0]["lat"], catalog[0]["lon"]
+        previous = None
+        for request in (1, 2):
+            ready = self.prepare_anchor(request, lat, lon, cx=0, cy=0)
+            aid = ready["anchorId"]
+            self.c.send({"type": "commit_anchor", "anchorId": aid})
+            self.c.send({"type": "commit_terrain", "anchorId": aid, "cx": 0, "cy": 0})
+            self.pose(aid, 0, 0)
+            message, _ = self.c.until(lambda m: m["type"] == "landmarks" and m["anchorId"] == aid, 60)
+            self.check(message)
+            frame = self.server.anchors[aid].frame
+            expected = {row["id"]: row for row in landmarksmod.select(catalog, frame, (0, 0), (0, -8))}
+            self.assertTrue(expected)
+            self.assertEqual({row["id"] for row in message["rows"]}, set(expected))
+            for row in message["rows"]:
+                source = expected[row["id"]]
+                for field in ("id", "title", "lat", "lon", "shape", "materials", "height_m"):
+                    self.assertEqual(row[field], source[field])
+                height = float(self.server.dem.sample(row["lat"], row["lon"], 14)) + source["ground_offset_m"]
+                np.testing.assert_allclose([row[k] for k in ("x", "y", "z")],
+                                           frame.geodetic_to_enu(row["lat"], row["lon"], height), atol=1e-6)
+                for field in ("shape", "materials"):
+                    self.assertTrue((landmarksmod.MOD_ROOT / row[field].lstrip("/")).is_file())
+            if previous is not None:
+                self.assertNotEqual(message["anchorId"], previous["anchorId"])
+                old = {row["id"]: row for row in previous["rows"]}
+                self.assertTrue(any(abs(row["x"] - old[row["id"]]["x"]) > 1000 for row in message["rows"]))
+            previous = message
+            lat, lon, _ = map(float, frame.enu_to_geodetic(2000, 0, 0))
+
+
+class LandmarkRowContractTest(unittest.TestCase):
+    check = ServerMessagesTest.check
+
+    def test_empty_snapshot_and_strict_nested_fields(self):
+        self.check({"type": "landmarks", "anchorId": 1, "rows": []})
+        row = {k: v for k, v in landmarksmod.catalog()[0].items() if k in LANDMARK_ROW}
+        row.update(x=1.0, y=2.0, z=3.0)
+        self.check({"type": "landmarks", "anchorId": 1, "rows": [row]})
+        cases = [dict(row, unexpected=1), {k: v for k, v in row.items() if k != "z"},
+                 dict(row, x=True), dict(row, z=float("nan")), dict(row, height_m="169"),
+                 dict(row, lat=91), dict(row, shape=landmarksmod.VFS + "../other.cdae")]
+        for invalid in cases:
+            with self.subTest(row=invalid), self.assertRaises(AssertionError):
+                self.check({"type": "landmarks", "anchorId": 1, "rows": [invalid]})
 
 
 class DeshadowHelloTest(test_server.ServerHarness):

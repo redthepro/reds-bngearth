@@ -1,0 +1,13 @@
+[Unit]
+Description=Renew Olympus BeamMP game port mappings
+StartLimitIntervalSec=30min
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/beamng-earth-server/upnp-renew.py
+NoNewPrivileges=yes
+PrivateTmp=yes
+TimeoutStartSec=360
+Restart=on-failure
+RestartSec=15s

@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh Olympus BeamMP UPnP leases every 30 minutes
+
+[Timer]
+OnStartupSec=2min
+OnUnitActiveSec=30min
+RandomizedDelaySec=30s
+AccuracySec=1min
+Unit=beammp-earth-upnp.service
+
+[Install]
+WantedBy=timers.target

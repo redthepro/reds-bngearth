@@ -1,0 +1,23 @@
+FROM docker.io/library/debian@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8
+
+ARG BEAMMP_VERSION=v3.9.3
+ARG BEAMMP_SHA256=8d24d463542be2e1d0e38c5eb58a1c168aa8c1a1309170a8bbdcdbdc27e2d6f1
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl liblua5.3-0 libstdc++6 \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
+       "https://github.com/BeamMP/BeamMP-Server/releases/download/${BEAMMP_VERSION}/BeamMP-Server.debian.12.x86_64" \
+       --output /usr/local/bin/BeamMP-Server \
+    && printf '%s  %s\n' "$BEAMMP_SHA256" /usr/local/bin/BeamMP-Server | sha256sum --check --strict \
+    && chmod 0755 /usr/local/bin/BeamMP-Server \
+    && /usr/local/bin/BeamMP-Server --version
+
+COPY healthcheck.sh /usr/local/bin/beammp-healthcheck
+RUN chmod 0755 /usr/local/bin/beammp-healthcheck
+LABEL org.opencontainers.image.title="BeamMP.Earth on Olympus" \
+      org.opencontainers.image.source="https://github.com/BeamMP/BeamMP-Server/tree/v3.9.3" \
+      org.opencontainers.image.version="3.9.3"
+USER 1000:1000
+WORKDIR /server
+EXPOSE 30814/tcp 30814/udp
+ENTRYPOINT ["/usr/local/bin/BeamMP-Server"]
+CMD ["--config=/server/ServerConfig.toml"]

@@ -870,6 +870,7 @@ class TrackerTest(unittest.TestCase):
         for make, kind in ((roads.Tracker, "roads"), (vegetation.Tracker, "veg")):
             conn, built = FakeConn(), []
             tr = make()
+            self.addCleanup(tr.close)
             cam = (5000.0, 0.0)
 
             async def go(view, n=60):
@@ -885,7 +886,10 @@ class TrackerTest(unittest.TestCase):
                 for _ in range(n):
                     tr.on_pose(conn, 1, 0.0, 0.0, loop, lambda aid, tx, ty: (f"/p/{tx}_{ty}", 1),
                                view=view)
-                    await asyncio.sleep(0.01)
+                    # Advance after this batch completes, independent of CI worker scheduling.
+                    # Submission order above still verifies that the car's tiles take priority.
+                    if tr.futs:
+                        await asyncio.gather(*tuple(tr.futs.values()))
             send = roads.SEND_M if kind == "roads" else vegetation.SEND_M
             car, seen = set(roads.tiles_near(0, 0, send)), set(roads.tiles_near(*cam, send))
             asyncio.run(go(cam))
@@ -903,6 +907,7 @@ class TrackerTest(unittest.TestCase):
         for make, kind in ((roads.Tracker, "roads"), (vegetation.Tracker, "veg")):
             conn, built = FakeConn(), []
             tr = make()
+            self.addCleanup(tr.close)
             focus = (4000.0, 0.0, 320.0, True)
 
             async def go(foci, n=60):
@@ -918,7 +923,10 @@ class TrackerTest(unittest.TestCase):
                 for _ in range(n):
                     tr.on_pose(conn, 1, 0.0, 0.0, loop, lambda aid, tx, ty: (f"/p/{tx}_{ty}", 1),
                                foci=foci)
-                    await asyncio.sleep(0.01)
+                    # The tracker caps builds in flight; elapsed sleeps cannot guarantee coverage
+                    # on a busy runner. Await real completion before supplying the next pose.
+                    if tr.futs:
+                        await asyncio.gather(*tuple(tr.futs.values()))
             send = roads.SEND_M if kind == "roads" else vegetation.SEND_M
             car = set(roads.tiles_near(0, 0, send))
             near = set(roads.tiles_near(4000.0, 0.0, min(send, 320.0 + roads.TILE / 2)))
