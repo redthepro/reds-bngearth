@@ -106,7 +106,8 @@ class AskPathTest(unittest.TestCase):
 
     def test_window_then_text_when_there_is_none(self):
         with mock.patch.object(apppaths, "pick", return_value=("none", None)):
-            got = apppaths.ask_path("Where?", "folder", lambda p: p, ask=self.answers("", "/typed"), say=lambda m: None)
+            got = apppaths.ask_path("Where?", "folder", apppaths.clean,
+                                    ask=self.answers("", "/typed"), say=lambda m: None)
         self.assertEqual(got, apppaths.clean("/typed"))
 
     def test_window_choice(self):
