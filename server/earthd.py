@@ -117,6 +117,7 @@ import seacarve as seacarvemod  # noqa: E402
 import seatiles as seatilesmod  # noqa: E402
 import vegetation as vegetationmod
 import buildings as buildingsmod  # noqa: E402
+import landmarks as landmarksmod  # noqa: E402
 import rockface as rockfacemod  # noqa: E402
 import riverlines as riverlinesmod  # noqa: E402
 import groundahead as groundaheadmod  # noqa: E402
@@ -2559,6 +2560,7 @@ class Connection:
         self.nav = navgraphmod.Tracker()        # the AI road graph around the player (--traffic on)
         self.gravity = gravitymod.Tracker()     # real gravity: recompute rule, last message sent
         self.credits = creditsmod.Tracker()     # data credits: throttle, last message sent (--credits on)
+        self.landmarks = landmarksmod.Tracker()  # bundled persistent landmark actors, grounded off the event loop
         self.ground_busy = False                # a groundahead job is running (one at a time)
         self.sea_busy = False                   # a water-tile plan is running (sea_tiles)
         self.sea_checked = None                 # (anchor id, 512 m square, monotonic, complete) of the last plan
@@ -2838,7 +2840,7 @@ class Connection:
                 self.s.share_stop()
             self.s.slots_let_go(list(self.slot_holds))
             self.slot_holds = {}
-            for tr in (self.roads, self.veg, self.bldfar, self.nav):
+            for tr in (self.roads, self.veg, self.bldfar, self.nav, self.landmarks):
                 tr.close()
             self.s.drop_claims(self)
             self.streamer.cancel()
@@ -3373,6 +3375,7 @@ class Connection:
         if self.s.traffic and aid == self.active:
             self.nav.on_pose(self, aid, *self.focus, asyncio.get_running_loop(), self.s.build_navgraph)
         if aid == self.active:
+            self.landmarks.on_pose(self, aid, self.focus, self.view_at)
             self.send_progress(aid)
         self.refresh_status()
         self.credits.poke(self)             # the player moved: the near / far credits may change

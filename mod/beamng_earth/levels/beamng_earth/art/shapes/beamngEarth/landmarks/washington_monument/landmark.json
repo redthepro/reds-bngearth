@@ -1,0 +1,315 @@
+{
+  "asset_id": "washington_monument",
+  "attribution": {
+    "uid": "8003b43ffd784caaab03b8b277f39b96",
+    "title": "Washington Monument",
+    "creator": "mikhailpagava",
+    "creator_url": "https://sketchfab.com/mikhailpagava",
+    "license": "Creative Commons Attribution",
+    "license_url": "http://creativecommons.org/licenses/by/4.0/",
+    "source_url": "https://sketchfab.com/3d-models/washington-monument-8003b43ffd784caaab03b8b277f39b96"
+  },
+  "source_sha256": "805829cd9b57b3a5ec5bf381edb6430100f9d9cd8d432860874a92cd1ed11ac9",
+  "geometry": {
+    "blender_version": "5.2.2 LTS",
+    "source_triangles": 2864,
+    "main_triangles": 2864,
+    "main_vertices": 7193,
+    "far_triangles": 623,
+    "far_vertices": 1555
+  },
+  "transform": {
+    "source_bounds": [
+      [
+        -26.252079010009766,
+        -26.25218963623047,
+        -0.001336054177954793
+      ],
+      [
+        26.252079010009766,
+        26.252084732055664,
+        169.29417419433594
+      ]
+    ],
+    "oriented_bounds": [
+      [
+        -26.252079010009766,
+        -26.25218963623047,
+        -0.001336054177954793
+      ],
+      [
+        26.252079010009766,
+        26.252084732055664,
+        169.29417419433594
+      ]
+    ],
+    "scale": 1.0,
+    "oriented_source_origin": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "source_origin": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "tilt_x_degrees": 0.0,
+    "tilt_y_degrees": 0.0,
+    "yaw_degrees": 0.0,
+    "rotation_order": "X tilt, Y tilt, Z yaw; then center and uniform scale",
+    "center": "origin",
+    "target_height": null,
+    "target_width": null,
+    "dimensions_source": "https://www.nps.gov/wamo/learn/historyculture/index.htm"
+  },
+  "bounds": [
+    [
+      -26.252079010009766,
+      -26.25218963623047,
+      -0.001336054177954793
+    ],
+    [
+      26.252079010009766,
+      26.252084732055664,
+      169.29417419433594
+    ]
+  ],
+  "materials": [
+    {
+      "source_name": "Monument",
+      "engine_name": "bne_lm_washington_monument_0_Monument"
+    },
+    {
+      "source_name": "Wall",
+      "engine_name": "bne_lm_washington_monument_1_Wall"
+    }
+  ],
+  "textures": [
+    {
+      "source": "bne_lm_washington_monument_0_Monument.color.png",
+      "file": "bne_lm_washington_monument_0_Monument.color.dds",
+      "size": [
+        1024,
+        1024
+      ],
+      "dxgi_format": 99,
+      "bytes": 1398276
+    },
+    {
+      "source": "bne_lm_washington_monument_0_Monument_ambientOcclusionMap.data.png",
+      "file": "bne_lm_washington_monument_0_Monument_ambientOcclusionMap.data.dds",
+      "size": [
+        1024,
+        1024
+      ],
+      "dxgi_format": 80,
+      "bytes": 699212
+    },
+    {
+      "source": "bne_lm_washington_monument_0_Monument_metallicMap.data.png",
+      "file": "bne_lm_washington_monument_0_Monument_metallicMap.data.dds",
+      "size": [
+        16,
+        16
+      ],
+      "dxgi_format": 80,
+      "bytes": 332
+    },
+    {
+      "source": "bne_lm_washington_monument_0_Monument_normalMap.normal.png",
+      "file": "bne_lm_washington_monument_0_Monument_normalMap.normal.dds",
+      "size": [
+        1024,
+        1024
+      ],
+      "dxgi_format": 83,
+      "bytes": 1398276
+    },
+    {
+      "source": "bne_lm_washington_monument_0_Monument_roughnessMap.data.png",
+      "file": "bne_lm_washington_monument_0_Monument_roughnessMap.data.dds",
+      "size": [
+        1024,
+        1024
+      ],
+      "dxgi_format": 80,
+      "bytes": 699212
+    },
+    {
+      "source": "bne_lm_washington_monument_1_Wall.color.png",
+      "file": "bne_lm_washington_monument_1_Wall.color.dds",
+      "size": [
+        1024,
+        1024
+      ],
+      "dxgi_format": 99,
+      "bytes": 1398276
+    },
+    {
+      "source": "bne_lm_washington_monument_1_Wall_ambientOcclusionMap.data.png",
+      "file": "bne_lm_washington_monument_1_Wall_ambientOcclusionMap.data.dds",
+      "size": [
+        1024,
+        1024
+      ],
+      "dxgi_format": 80,
+      "bytes": 699212
+    },
+    {
+      "source": "bne_lm_washington_monument_1_Wall_metallicMap.data.png",
+      "file": "bne_lm_washington_monument_1_Wall_metallicMap.data.dds",
+      "size": [
+        1024,
+        1024
+      ],
+      "dxgi_format": 80,
+      "bytes": 699212
+    },
+    {
+      "source": "bne_lm_washington_monument_1_Wall_normalMap.normal.png",
+      "file": "bne_lm_washington_monument_1_Wall_normalMap.normal.dds",
+      "size": [
+        1024,
+        1024
+      ],
+      "dxgi_format": 83,
+      "bytes": 1398276
+    },
+    {
+      "source": "bne_lm_washington_monument_1_Wall_roughnessMap.data.png",
+      "file": "bne_lm_washington_monument_1_Wall_roughnessMap.data.dds",
+      "size": [
+        1024,
+        1024
+      ],
+      "dxgi_format": 80,
+      "bytes": 699212
+    }
+  ],
+  "texture_format": "dds",
+  "virtual_path": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/washington_monument",
+  "lod_pixels": 300.0,
+  "warnings": [],
+  "source_units": "glTF metres; geographic dimensions must be verified separately",
+  "modified": "Converted to Z-up static compiled shape, centered/scaled/rotated as recorded; camera LOD decimated; textures converted",
+  "source_derivation": {
+    "original_source_sha256": "6c5293cd178066394add306a44a96c17ae58c1d5440d4d0eedd18eb5dda0b09d",
+    "modified": "Retained the licensed source plinth, its UVs and materials with uniform meter scaling. Replaced the original 82-triangle untapered, undersized shaft and its fictional open chamber with a closed 14-triangle tapered obelisk: 16.8021m base side, 10.5029m pyramid-base side at Z=152.4m, apex Z=169.294175m. Recalculated outward flat normals and mapped the replacement to a clean limestone patch of the original Monument atlas. Small observation windows are omitted. Shaft and plinth share Z=0 at the lowest plinth point; the plinth overlaps the lowest shaft and adds no extra height. The 500ft junction is an NPS stated level, not a sub-inch survey value.",
+    "dimensions_source": "https://www.nps.gov/wamo/learn/historyculture/index.htm",
+    "dimension_sources": [
+      "https://www.nps.gov/wamo/learn/historyculture/index.htm",
+      "https://npgallery.nps.gov/pdfhost/docs/NRHP/Text/66000035.pdf",
+      "https://www.ngs.noaa.gov/surveys/ngs/wm2013/"
+    ],
+    "repair": {
+      "blender_version": "5.2.2 LTS",
+      "original_bounds": [
+        [
+          -643.9498901367188,
+          -643.9500122070312,
+          -24.98992347717285
+        ],
+        [
+          643.9498901367188,
+          643.9500122070312,
+          4127.70849609375
+        ]
+      ],
+      "original_to_meters": 0.04076726935000791,
+      "before": [
+        {
+          "name": "defaultMaterial",
+          "vertices": 1998,
+          "triangles": 2850,
+          "boundary_edges": 1036,
+          "nonmanifold_edges": 1036,
+          "signed_volume_m3": 4631.52671050712,
+          "bounds": [
+            [
+              -26.252079010009766,
+              -26.252084732055664,
+              0.0
+            ],
+            [
+              26.252079010009766,
+              26.252084732055664,
+              6.508022308349609
+            ]
+          ]
+        },
+        {
+          "name": "defaultMaterial.001",
+          "vertices": 124,
+          "triangles": 82,
+          "boundary_edges": 128,
+          "nonmanifold_edges": 128,
+          "signed_volume_m3": 10279.812542237003,
+          "bounds": [
+            [
+              -4.076737880706787,
+              -4.0767388343811035,
+              1.267387866973877
+            ],
+            [
+              4.076737880706787,
+              4.076786994934082,
+              169.29417419433594
+            ]
+          ]
+        }
+      ],
+      "after": [
+        {
+          "name": "defaultMaterial",
+          "vertices": 1998,
+          "triangles": 2850,
+          "boundary_edges": 1036,
+          "nonmanifold_edges": 1036,
+          "signed_volume_m3": 4631.52671050712,
+          "bounds": [
+            [
+              -26.252079010009766,
+              -26.25229263305664,
+              -3.3929616165551124e-06
+            ],
+            [
+              26.252079010009766,
+              26.25208282470703,
+              6.508021831512451
+            ]
+          ]
+        },
+        {
+          "name": "Washington_corrected_shaft",
+          "vertices": 9,
+          "triangles": 14,
+          "boundary_edges": 0,
+          "nonmanifold_edges": 0,
+          "signed_volume_m3": 29531.08773399058,
+          "bounds": [
+            [
+              -8.401049613952637,
+              -8.401049613952637,
+              0.0
+            ],
+            [
+              8.401049613952637,
+              8.401049613952637,
+              169.29417419433594
+            ]
+          ]
+        }
+      ],
+      "retained_plinth_geometry_sha256": "9ed10f2f832b76d0aeffcfe2ecd6f8489817028dad10c9bfc9c5b5bbb38231b5",
+      "height_datum": "historic height; shared modeled base Z=0",
+      "apex_m": 169.294175,
+      "base_width_m": 16.8021,
+      "pyramid_base_width_m": 10.5029,
+      "pyramid_base_z_m": 152.4,
+      "preserve_lod_objects": [
+        "Washington_corrected_shaft"
+      ]
+    }
+  }
+}

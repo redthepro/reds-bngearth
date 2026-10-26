@@ -1,0 +1,411 @@
+{
+  "retrieved_date": "2026-10-25",
+  "purpose": "Curated candidates for manual review, not a runtime asset manifest or proof of placement accuracy.",
+  "method": "Public Sketchfab model/search API metadata and public model thumbnails; no authenticated download URLs or credentials are stored here.",
+  "status": "First pack bundles only the three explicitly marked models; other entries remain research candidates.",
+  "common_integration_requirements": [
+    "Retain author, model URL, license URL and change notices with each model actually distributed; CC BY 4.0 permits redistribution and adaptation subject to its terms.",
+    "Verify downloaded archive contents and any included attribution/provenance before redistribution.",
+    "Measure geometry in meters, verify orientation and geographic footprint, ground it against terrain, and suppress overlapping generic building geometry.",
+    "Generate useful LODs and simple collision, bound texture memory/material count, and measure runtime loading before selecting detail levels."
+  ],
+  "license_reference": "https://creativecommons.org/licenses/by/4.0/",
+  "models": [
+    {
+      "landmark": "Washington Monument",
+      "review_status": "bundled_first_dc_pack",
+      "uid": "8003b43ffd784caaab03b8b277f39b96",
+      "title": "Washington Monument",
+      "source_url": "https://sketchfab.com/3d-models/washington-monument-8003b43ffd784caaab03b8b277f39b96",
+      "metadata_url": "https://api.sketchfab.com/v3/models/8003b43ffd784caaab03b8b277f39b96",
+      "creator": {
+        "display_name": "Takugava3DS",
+        "username": "mikhailpagava",
+        "profile_url": "https://sketchfab.com/mikhailpagava"
+      },
+      "license": {
+        "id": "CC-BY-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "Public Sketchfab API license field on the retrieval date; no independent authorship warranty."
+      },
+      "downloadable_at_review": true,
+      "triangle_count": 2932,
+      "vertex_count": 1466,
+      "description_supplied": true,
+      "metric_scale_verified": true,
+      "binary_geometry_inspected": true,
+      "public_thumbnail_inspected": true,
+      "preview_assessment": "Textured marble obelisk with a modeled circular base. Recognizable preview; inspect the base and remove or adapt inaccurate paving before placement.",
+      "before_integration": [
+        "Check vertical scale against the NOAA survey and use a consistent entrance/base datum.",
+        "Retain a lightweight distant LOD."
+      ],
+      "runtime_asset_id": "washington_monument",
+      "validation_limit": "Converted shape/LOD/materials inspected offline; live terrain placement still needs review.",
+      "integration_note": "Licensed plinth/materials retained. Original undersized open shaft rejected and replaced with a closed tapered shaft using NPS dimensions, preserved intact in both LODs."
+    },
+    {
+      "landmark": "Lincoln Memorial",
+      "review_status": "bundled_first_dc_pack",
+      "uid": "5f7ac3d94d4c45b7a4054b2f60bb16cf",
+      "title": "Lincoln Memorial",
+      "source_url": "https://sketchfab.com/3d-models/lincoln-memorial-5f7ac3d94d4c45b7a4054b2f60bb16cf",
+      "metadata_url": "https://api.sketchfab.com/v3/models/5f7ac3d94d4c45b7a4054b2f60bb16cf",
+      "creator": {
+        "display_name": "MattParson",
+        "username": "MattParson",
+        "profile_url": "https://sketchfab.com/MattParson"
+      },
+      "license": {
+        "id": "CC-BY-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "Public Sketchfab API license field on the retrieval date; no independent authorship warranty."
+      },
+      "downloadable_at_review": true,
+      "triangle_count": 91044,
+      "vertex_count": 76167,
+      "description_supplied": false,
+      "metric_scale_verified": true,
+      "binary_geometry_inspected": true,
+      "public_thumbnail_inspected": true,
+      "preview_assessment": "Recognizable full temple with fluted colonnades, stepped approaches and parapet details; preview is untextured. More complete silhouette than the low-poly alternatives.",
+      "before_integration": [
+        "Check column counts and footprint against references.",
+        "Inspect material availability; generate appropriate LODs and simple collision."
+      ],
+      "runtime_asset_id": "lincoln_memorial",
+      "validation_limit": "Converted shape/LOD/materials inspected offline; live terrain placement still needs review."
+    },
+    {
+      "landmark": "White House",
+      "review_status": "bundled_first_dc_pack",
+      "uid": "dbdb320ba4c6427ca4f2b2c2438034f9",
+      "title": "The White House",
+      "source_url": "https://sketchfab.com/3d-models/the-white-house-dbdb320ba4c6427ca4f2b2c2438034f9",
+      "metadata_url": "https://api.sketchfab.com/v3/models/dbdb320ba4c6427ca4f2b2c2438034f9",
+      "creator": {
+        "display_name": "Void",
+        "username": "Void.com",
+        "profile_url": "https://sketchfab.com/Void.com"
+      },
+      "license": {
+        "id": "CC-BY-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "Public Sketchfab API license field on the retrieval date; no independent authorship warranty."
+      },
+      "downloadable_at_review": true,
+      "triangle_count": 390434,
+      "vertex_count": 133044,
+      "description_supplied": false,
+      "metric_scale_verified": true,
+      "binary_geometry_inspected": true,
+      "public_thumbnail_inspected": true,
+      "preview_assessment": "Preview includes a textured central mansion and both connecting wings, offering substantially more site coverage than the Microsoft mansion-only model.",
+      "before_integration": [
+        "Verify footprint, portico orientation and wing geometry.",
+        "Reduce geometry where visually safe; inspect texture size and atlas layout."
+      ],
+      "runtime_asset_id": "white_house",
+      "validation_limit": "Converted shape/LOD/materials inspected offline; live terrain placement still needs review.",
+      "integration_note": "Cropped to the residence and porticos; mapped wings and State Ballroom remain procedural."
+    },
+    {
+      "landmark": "US Capitol",
+      "review_status": "rejected_for_first_pack",
+      "uid": "d4049804543d4d49813767d2e9b72664",
+      "title": "US_capitol_building",
+      "source_url": "https://sketchfab.com/3d-models/us-capitol-building-d4049804543d4d49813767d2e9b72664",
+      "metadata_url": "https://api.sketchfab.com/v3/models/d4049804543d4d49813767d2e9b72664",
+      "creator": {
+        "display_name": "ycpan3468",
+        "username": "ycpan3468",
+        "profile_url": "https://sketchfab.com/ycpan3468"
+      },
+      "license": {
+        "id": "CC-BY-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "Public Sketchfab API license field on the retrieval date; no independent authorship warranty."
+      },
+      "downloadable_at_review": true,
+      "triangle_count": 704059,
+      "vertex_count": 352697,
+      "description_supplied": false,
+      "metric_scale_verified": false,
+      "binary_geometry_inspected": true,
+      "public_thumbnail_inspected": true,
+      "preview_assessment": "Preview has the recognizable Capitol dome and full wings, but also includes a large ground slab and scan-like baked surroundings. Best-looking full Capitol among the inspected downloadable results.",
+      "before_integration": [
+        "Inspect source/texture provenance before redistribution; the uploader provided no description.",
+        "Remove surrounding ground and unwanted baked vegetation, preserve useful building details, then create LODs.",
+        "Use the Architect of the Capitol dimensions with the correct height datum."
+      ],
+      "rejection_reason": "Source preview appears to depict a miniature replica with Chinese signage and an inaccurate finial; scan also includes a ground slab and vegetation."
+    },
+    {
+      "landmark": "Jefferson Memorial",
+      "review_status": "deferred",
+      "uid": "c0004eecde954021be6f262b6876b628",
+      "title": "Jefferson Memorial TV NF",
+      "source_url": "https://sketchfab.com/3d-models/jefferson-memorial-tv-nf-c0004eecde954021be6f262b6876b628",
+      "metadata_url": "https://api.sketchfab.com/v3/models/c0004eecde954021be6f262b6876b628",
+      "creator": {
+        "display_name": "wareFLO",
+        "username": "wareFLO",
+        "profile_url": "https://sketchfab.com/wareFLO"
+      },
+      "license": {
+        "id": "CC-BY-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "Public Sketchfab API license field on the retrieval date; no independent authorship warranty."
+      },
+      "downloadable_at_review": true,
+      "triangle_count": 24556,
+      "vertex_count": 12000,
+      "description_supplied": false,
+      "metric_scale_verified": false,
+      "binary_geometry_inspected": true,
+      "public_thumbnail_inspected": true,
+      "preview_assessment": "Recognizable circular colonnade, dome and front portico. Untextured print-like preview includes a broad circular platform.",
+      "before_integration": [
+        "Verify dome and front approach proportions.",
+        "Inspect material and platform geometry before placement."
+      ],
+      "integration_note": "Simplified untextured geometry and broad platform require additional footprint/proportion checks before replacement."
+    },
+    {
+      "landmark": "Jefferson Memorial",
+      "review_status": "alternative",
+      "uid": "1297914d2ccf46af8869be161546d911",
+      "title": "Jefferson Memorial",
+      "source_url": "https://sketchfab.com/3d-models/jefferson-memorial-1297914d2ccf46af8869be161546d911",
+      "metadata_url": "https://api.sketchfab.com/v3/models/1297914d2ccf46af8869be161546d911",
+      "creator": {
+        "display_name": "asandker",
+        "username": "asandker",
+        "profile_url": "https://sketchfab.com/asandker"
+      },
+      "license": {
+        "id": "CC-BY-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "Public Sketchfab API license field on the retrieval date; no independent authorship warranty."
+      },
+      "downloadable_at_review": true,
+      "triangle_count": 278368,
+      "vertex_count": 146421,
+      "description_supplied": false,
+      "metric_scale_verified": false,
+      "binary_geometry_inspected": false,
+      "public_thumbnail_inspected": true,
+      "preview_assessment": "Untextured circular memorial with front portico; much denser than the wareFLO candidate without an obvious matching increase in preview detail.",
+      "before_integration": [
+        "Compare actual mesh quality before accepting the higher geometry cost."
+      ]
+    },
+    {
+      "landmark": "White House",
+      "review_status": "mansion_only_fallback",
+      "uid": "f5f7ac635a844be493f619d9a7a37be5",
+      "title": "White House",
+      "source_url": "https://sketchfab.com/3d-models/white-house-f5f7ac635a844be493f619d9a7a37be5",
+      "metadata_url": "https://api.sketchfab.com/v3/models/f5f7ac635a844be493f619d9a7a37be5",
+      "creator": {
+        "display_name": "Microsoft",
+        "username": "microsoft",
+        "profile_url": "https://sketchfab.com/microsoft"
+      },
+      "license": {
+        "id": "CC-BY-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "Public Sketchfab API license field on the retrieval date; no independent authorship warranty."
+      },
+      "downloadable_at_review": true,
+      "triangle_count": 2960,
+      "vertex_count": 1459,
+      "description_supplied": false,
+      "metric_scale_verified": false,
+      "binary_geometry_inspected": false,
+      "public_thumbnail_inspected": true,
+      "preview_assessment": "Simple untextured executive mansion with recognizable portico and recessed windows; does not include the east/west wings or surrounding site.",
+      "before_integration": [
+        "Suitable only where the limited coverage is acceptable; check silhouette before using as an LOD."
+      ]
+    },
+    {
+      "landmark": "Lincoln Memorial",
+      "review_status": "low_detail_fallback",
+      "uid": "d6e563ca39394410a2ff24ad541ed2b2",
+      "title": "Lincoln Memorial",
+      "source_url": "https://sketchfab.com/3d-models/lincoln-memorial-d6e563ca39394410a2ff24ad541ed2b2",
+      "metadata_url": "https://api.sketchfab.com/v3/models/d6e563ca39394410a2ff24ad541ed2b2",
+      "creator": {
+        "display_name": "kimdt",
+        "username": "kimdt",
+        "profile_url": "https://sketchfab.com/kimdt"
+      },
+      "license": {
+        "id": "CC-BY-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "Public Sketchfab API license field on the retrieval date; no independent authorship warranty."
+      },
+      "downloadable_at_review": true,
+      "triangle_count": 3256,
+      "vertex_count": 1740,
+      "description_supplied": false,
+      "metric_scale_verified": false,
+      "binary_geometry_inspected": false,
+      "public_thumbnail_inspected": true,
+      "preview_assessment": "Simple untextured temple, columns and stepped platform; preview omits much architectural detail.",
+      "before_integration": [
+        "Evaluate only as a lightweight fallback or distant silhouette."
+      ]
+    },
+    {
+      "landmark": "Pentagon",
+      "review_status": "rejected_for_accuracy",
+      "uid": "5486728c9dfa4427a120882a6783c2c0",
+      "title": "Pentagon",
+      "source_url": "https://sketchfab.com/3d-models/pentagon-5486728c9dfa4427a120882a6783c2c0",
+      "metadata_url": "https://api.sketchfab.com/v3/models/5486728c9dfa4427a120882a6783c2c0",
+      "creator": {
+        "display_name": "neosearch",
+        "username": "neosearch",
+        "profile_url": "https://sketchfab.com/neosearch"
+      },
+      "license": {
+        "id": "CC-BY-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "Public Sketchfab API license field on the retrieval date; no independent authorship warranty."
+      },
+      "downloadable_at_review": true,
+      "triangle_count": 3002,
+      "vertex_count": 1523,
+      "description_supplied": true,
+      "metric_scale_verified": false,
+      "binary_geometry_inspected": false,
+      "public_thumbnail_inspected": true,
+      "preview_assessment": "Preview is one broad pentagonal ring around a courtyard rather than the real five-ring layout. Prefer the existing Overture geometry once the renderer height issue is fixed.",
+      "before_integration": []
+    },
+    {
+      "landmark": "US Capitol",
+      "review_status": "rejected_wrong_building",
+      "uid": "de7e7a4ef0614c8d9764566ed858a0f2",
+      "title": "USA Capitol Building with Animated Characters",
+      "source_url": "https://sketchfab.com/3d-models/usa-capitol-building-with-animated-characters-de7e7a4ef0614c8d9764566ed858a0f2",
+      "metadata_url": "https://api.sketchfab.com/v3/models/de7e7a4ef0614c8d9764566ed858a0f2",
+      "creator": {
+        "display_name": "LasquetiSpice",
+        "username": "LasquetiSpice",
+        "profile_url": "https://sketchfab.com/LasquetiSpice"
+      },
+      "license": {
+        "id": "CC-BY-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "Public Sketchfab API license field on the retrieval date; no independent authorship warranty."
+      },
+      "downloadable_at_review": true,
+      "triangle_count": 42162,
+      "vertex_count": 23289,
+      "description_supplied": true,
+      "metric_scale_verified": false,
+      "binary_geometry_inspected": false,
+      "public_thumbnail_inspected": true,
+      "preview_assessment": "Despite its title, the preview is a stylized medieval tower with animated characters, not the US Capitol.",
+      "before_integration": []
+    },
+    {
+      "landmark": "US Capitol",
+      "review_status": "rejected_wrong_building",
+      "uid": "0cd80022df1f472880af56f10e5f7723",
+      "title": "Capitol",
+      "source_url": "https://sketchfab.com/3d-models/capitol-0cd80022df1f472880af56f10e5f7723",
+      "metadata_url": "https://api.sketchfab.com/v3/models/0cd80022df1f472880af56f10e5f7723",
+      "creator": {
+        "display_name": "Jane_k",
+        "username": "Jane_k",
+        "profile_url": "https://sketchfab.com/Jane_k"
+      },
+      "license": {
+        "id": "CC-BY-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "Public Sketchfab API license field on the retrieval date; no independent authorship warranty."
+      },
+      "downloadable_at_review": true,
+      "triangle_count": 8835,
+      "vertex_count": 4661,
+      "description_supplied": true,
+      "metric_scale_verified": false,
+      "binary_geometry_inspected": false,
+      "public_thumbnail_inspected": true,
+      "preview_assessment": "Preview is a red-roofed European/neoclassical building, not the US Capitol.",
+      "before_integration": []
+    },
+    {
+      "landmark": "Arlington Memorial Bridge",
+      "review_status": "rejected_for_accuracy",
+      "uid": "0385d925b1a34b708b4218d966573248",
+      "title": "Arlington Memorial Bridge - Colin.F",
+      "source_url": "https://sketchfab.com/3d-models/arlington-memorial-bridge-colinf-0385d925b1a34b708b4218d966573248",
+      "metadata_url": "https://api.sketchfab.com/v3/models/0385d925b1a34b708b4218d966573248",
+      "creator": {
+        "display_name": "jspencer",
+        "username": "jspencer",
+        "profile_url": "https://sketchfab.com/jspencer"
+      },
+      "license": {
+        "id": "CC-BY-4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "basis": "Public Sketchfab API license field on the retrieval date; no independent authorship warranty."
+      },
+      "downloadable_at_review": true,
+      "triangle_count": 3063,
+      "vertex_count": 1740,
+      "description_supplied": false,
+      "metric_scale_verified": false,
+      "binary_geometry_inspected": false,
+      "public_thumbnail_inspected": true,
+      "preview_assessment": "Preview is very simplified extruded arches and prisms, lacking railings, sculpture and useful bridge detail. It does not address driving surface or collision correctness.",
+      "before_integration": []
+    }
+  ],
+  "official_scale_references": [
+    {
+      "landmark": "Washington Monument",
+      "url": "https://www.ngs.noaa.gov/surveys/ngs/wm2013/",
+      "measurement": "169.046 m architectural height using CTBUH criteria; the traditional 555 ft 5 1/8 in height uses a different base datum.",
+      "warning": "Do not force a model including a plinth or ground slab to this height without checking its modeled base."
+    },
+    {
+      "landmark": "US Capitol",
+      "url": "https://www.aoc.gov/what-we-do/projects/dome-restoration-project/by-the-numbers",
+      "measurement": "288 ft above East Front Plaza including the Statue of Freedom; exterior dome diameter 135 ft.",
+      "warning": "Full model bounds may include ground/steps below the plaza datum."
+    }
+  ],
+  "government_data_fallbacks": [
+    {
+      "title": "District of Columbia Buildings 3D Scene - 2022",
+      "publisher": "D.C. Office of the Chief Technology Officer",
+      "source_url": "https://catalog.data.gov/dataset/buildings-3d-scene-2022",
+      "service_url": "https://tiles.arcgis.com/tiles/neT9SoYxizqTHZPH/arcgis/rest/services/3D_Buildings_2022_Maximum_Height_WSL1/SceneServer",
+      "license": "CC-BY-4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "format": "I3S scene layer, lidar-derived building multipatches",
+      "limits": [
+        "Some areas have no building returns because the source lidar was redacted under Secret Service guidance.",
+        "Covers the District of Columbia; the Pentagon is in Arlington, Virginia.",
+        "Requires geometry conversion and LOD work; not a drop-in textured landmark collection."
+      ]
+    },
+    {
+      "title": "Architectural and sculptural drawings for Lincoln Memorial",
+      "publisher": "Library of Congress",
+      "source_url": "https://www.loc.gov/pictures/collection/ade/item/2010650049/",
+      "rights_statement": "No known restrictions on publication",
+      "limits": [
+        "Reference drawings for manual modeling, not a ready-to-use 3D mesh.",
+        "Check digitized item availability and individual item rights before reuse."
+      ]
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 """Sharing authorization, framing limits, persistent cache and cross-platform identity."""
 import io
+import json
 from pathlib import Path
 import socket
 import struct
@@ -12,6 +13,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import peerauth
 import peerwork
+import landmarks
 from test_peerwork import CountingLocal, header
 
 
@@ -23,6 +25,80 @@ class FingerprintTest(unittest.TestCase):
             self.assertEqual(peerwork.source_id(a), peerwork.source_id(b))
             Path(b, 'one.py').write_bytes(b'x = 2\ny = 2\n')
             self.assertNotEqual(peerwork.source_id(a), peerwork.source_id(b))
+
+    def installed_id(self, root):
+        rows = landmarks.load_catalog(root / 'mod' / 'beamng_earth')
+        landmarks._excluded.cache_clear()
+        try:
+            with mock.patch.object(landmarks, 'catalog', return_value=rows), \
+                    mock.patch.object(peerwork, '_ROOT', str(root)), \
+                    mock.patch.object(peerwork, '_CODE_ID', None), \
+                    mock.patch.object(peerwork, 'source_id', side_effect=AssertionError('frozen CODE_ID must be preserved')):
+                result = peerwork.code_id()
+                self.assertEqual(result, peerwork.code_id(), 'startup identity is cached like the installed catalog')
+                self.assertTrue(result.startswith('same-frozen-source-'))
+                return result
+        finally:
+            landmarks._excluded.cache_clear()
+
+    def install(self, root, exclude_ids):
+        Path(root, 'CODE_ID').write_text('same-frozen-source\n', encoding='ascii')
+        folder = root / 'mod' / 'beamng_earth' / landmarks.VFS.lstrip('/')
+        asset = folder / 'sample'
+        asset.mkdir(parents=True)
+        (asset / 'compiled.cdae').write_bytes(b'fixture-shape')
+        (asset / 'main.materials.json').write_text('{}')
+        row = {'id': 'sample', 'lat': 38.889, 'lon': -77.035, 'height_m': 169.294,
+               'shape': landmarks.VFS + 'sample/compiled.cdae',
+               'materials': landmarks.VFS + 'sample/main.materials.json', 'exclude_ids': exclude_ids}
+        manifest = folder / 'manifest.json'
+        manifest.write_text(json.dumps({'schema': 1, 'landmarks': [row]}))
+        return manifest, asset, row
+
+    def test_runtime_exclusions_extend_frozen_identity_and_missing_assets_do_not_exclude(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest, asset, row = self.install(root, ['building-a'])
+            installed = self.installed_id(root)
+            row['exclude_ids'] = ['building-b']
+            manifest.write_text(json.dumps({'landmarks': [row]}))
+            self.assertNotEqual(installed, self.installed_id(root))
+            (asset / 'compiled.cdae').unlink()
+            missing = self.installed_id(root)
+            self.assertNotEqual(installed, missing)
+            manifest.write_text(json.dumps({'landmarks': []}))
+            self.assertEqual(missing, self.installed_id(root), 'missing custom asset uses the same generic visuals as no exclusions')
+
+    def test_effective_exclusions_are_order_independent_and_ignore_model_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest, asset, row = self.install(root, ['building-b', 'building-a', 'building-a'])
+            first = self.installed_id(root)
+            row.update(exclude_ids=['building-a', 'building-b'], title='new title', lat=39, height_m=170)
+            manifest.write_text(json.dumps({'landmarks': [row]}))
+            (asset / 'compiled.cdae').write_bytes(b'different-custom-geometry')
+            self.assertEqual(first, self.installed_id(root), 'same procedural suppression despite different custom model metadata/bytes')
+
+    def test_different_installed_exclusions_reject_peer_handshake(self):
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            self.install(Path(a), ['building-a'])
+            self.install(Path(b), ['building-b'])
+            left_id, right_id = self.installed_id(Path(a)), self.installed_id(Path(b))
+        left, right = socket.socketpair()
+        errors = []
+        def serve():
+            with right:
+                try:
+                    peerauth.server(right, 'a' * 64, {'protocol': peerwork.PROTOCOL, 'code': right_id, 'workers': 1})
+                except (ValueError, OSError) as exc:
+                    errors.append(exc)
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        with left, self.assertRaises((ValueError, OSError)):
+            peerauth.client(left, 'a' * 64, {'protocol': peerwork.PROTOCOL, 'code': left_id}, 1)
+        thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(errors, 'mismatched installed visuals are rejected before any job')
 
 
 class CacheTest(unittest.TestCase):

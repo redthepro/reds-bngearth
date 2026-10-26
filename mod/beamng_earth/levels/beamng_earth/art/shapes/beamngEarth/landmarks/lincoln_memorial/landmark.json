@@ -1,0 +1,116 @@
+{
+  "asset_id": "lincoln_memorial",
+  "attribution": {
+    "uid": "5f7ac3d94d4c45b7a4054b2f60bb16cf",
+    "title": "Lincoln Memorial",
+    "creator": "MattParson",
+    "creator_url": "https://sketchfab.com/MattParson",
+    "license": "Creative Commons Attribution",
+    "license_url": "http://creativecommons.org/licenses/by/4.0/",
+    "source_url": "https://sketchfab.com/3d-models/lincoln-memorial-5f7ac3d94d4c45b7a4054b2f60bb16cf"
+  },
+  "source_sha256": "1a8f525d53e606e6c7a78b6ea1b9f0efff35f3481568c41cb4f5e42df87768d1",
+  "geometry": {
+    "blender_version": "5.2.2 LTS",
+    "source_triangles": 81608,
+    "main_triangles": 32841,
+    "main_vertices": 61649,
+    "far_triangles": 4993,
+    "far_vertices": 10908
+  },
+  "transform": {
+    "source_bounds": [
+      [
+        -43.689998626708984,
+        -44.919403076171875,
+        0.0809914693236351
+      ],
+      [
+        43.689998626708984,
+        31.844562530517578,
+        35.93382263183594
+      ]
+    ],
+    "oriented_bounds": [
+      [
+        -31.84456253051758,
+        -43.689998626708984,
+        0.0809914693236351
+      ],
+      [
+        44.919403076171875,
+        43.689998626708984,
+        35.93382263183594
+      ]
+    ],
+    "scale": 0.8181403879,
+    "oriented_source_origin": [
+      0.0,
+      0.0,
+      0.0809914693236351
+    ],
+    "source_origin": [
+      0.0,
+      0.0,
+      0.0809914693236351
+    ],
+    "tilt_x_degrees": 0.0,
+    "tilt_y_degrees": 0.0,
+    "yaw_degrees": 90.0,
+    "rotation_order": "X tilt, Y tilt, Z yaw; then center and uniform scale",
+    "center": "base",
+    "target_height": null,
+    "target_width": null,
+    "dimensions_source": "https://www.nps.gov/linc/learn/historyculture/lincoln-memorial-building-statistics.htm",
+    "crop_oriented_bounds": [
+      [
+        -1000000.0,
+        -1000000.0,
+        -1000000.0
+      ],
+      [
+        1000000.0,
+        45.0,
+        1000000.0
+      ]
+    ]
+  },
+  "bounds": [
+    [
+      -26.05332274122346,
+      -35.744552423806155,
+      0.0
+    ],
+    [
+      36.75037785697571,
+      35.744552423806155,
+      29.332649194611022
+    ]
+  ],
+  "materials": [
+    {
+      "source_name": "initialShadingGroup",
+      "engine_name": "bne_lm_lincoln_memorial_1_initialShadingGroup"
+    }
+  ],
+  "textures": [
+    {
+      "source": "bne_lm_lincoln_memorial_1_initialShadingGroup.color.png",
+      "file": "bne_lm_lincoln_memorial_1_initialShadingGroup.color.dds",
+      "size": [
+        16,
+        16
+      ],
+      "dxgi_format": 99,
+      "bytes": 516
+    }
+  ],
+  "texture_format": "dds",
+  "virtual_path": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/lincoln_memorial",
+  "lod_pixels": 150.0,
+  "warnings": [
+    "Source geometry clipped to the recorded oriented box before decimation; cut surfaces are not capped"
+  ],
+  "source_units": "glTF metres; geographic dimensions must be verified separately",
+  "modified": "Converted to Z-up static compiled shape, centered/scaled/rotated as recorded; camera LOD decimated; textures converted"
+}

@@ -37,6 +37,12 @@ Compared with upstream 1.6.2-beta:
   eastern US suburbs, including Northern Virginia, while retaining mapped heights and roof types.
 - **Working lights at night.** Nearby street and pole lamps receive actual scene lights that follow dusk and
   dawn, with distance fading and limits on how many lights are active or created at once.
+- **A curated Washington, DC landmark pack.** The Washington Monument, Lincoln Memorial, and White House use
+  attributed models with reduced distance LODs, prepared textures, and bounded loading. Large mapped buildings
+  such as the Pentagon
+  retain their walls beneath rooftop parts and keep their courtyards open, including in collision geometry.
+  Custom visuals retain mapped building collision; this is a first DC detail pass, with placement still needing
+  in-game comparison against the surrounding terrain. See [landmark credits](CREDITS.md#bundled-dc-landmark-models).
 - **More resilient loading.** Invalid cached elevation blocks and map metadata are rebuilt, failed vegetation
   requests wait before retrying, and reused terrain material slots retain the correct source material.
   Network logs distinguish request-queue waits from HTTP time to help diagnose slow loading.

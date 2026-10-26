@@ -67,6 +67,7 @@ local gps = require('beamngEarth/gps')               -- the game's GPS route to 
 local collisionfoci = require('beamngEarth/collisionfoci') -- other vehicles' collision islands
 local terrainpatch = require('beamngEarth/terrainpatch')   -- ground under the islands off the terrain block
 local farcars = require('beamngEarth/farcars')             -- far player cars saved, taken out and put back
+local landmarks = require('beamngEarth/landmarks')         -- bundled landmarks outside the pooled tile files
 local fociBroken = false
 -- The pose's foci: the last collision foci (collisionfoci.lua), rounded, at most 16 (earthd FOCI_MAX); nil when none.
 local function poseFoci()
@@ -406,6 +407,7 @@ local function commitTeleport(msg)
     return false
   end
   farfield.switchAnchor(msg.anchorId, false, { cx = tr.cx, cy = tr.cy }, st.sessionId)
+  landmarks.clear() -- a teleport has no continuity with the previous landmark frame
   st.loadingUntil = st.clock + LOADING_AFTER_TELEPORT_S
   st.placeFrames = PLACE_DELAY_FRAMES
   st.placeZ = (msg.groundZ or 0) + 1.0
@@ -455,6 +457,7 @@ local function finishRebase()
   roads.transform(xf, geodesy)
   trees.transform(xf, geodesy)
   sea.transform(xf, msg.anchorId)
+  landmarks.transform(xf, msg.anchorId)
   -- a resync with a restarted server keeps the previous session's tiles the same way (st.sessionId
   -- is the new session's): they go once the new session's tiles cover them
   farfield.switchAnchor(msg.anchorId, true, { cx = tr.cx, cy = tr.cy }, st.sessionId)
@@ -658,8 +661,10 @@ local function onMessage(msg)
     if not st.anchor then st.autoTeleportDone = false end
     sea.clear()
     trees.clear()
+    landmarks.clear()
     setStatus('Disconnected from companion server: ' .. tostring(msg.error))
   elseif t == 'hello' then
+    landmarks.clear()
     pcall(mpsession.onServerHello)
     farfield.configureReserve(msg.streaming)
     st.sessionId = msg.sessionId
@@ -892,6 +897,8 @@ local function onMessage(msg)
       cacheClears = cacheClears + 1
       cacheInfo.clearedBytes, cacheInfo.clears = tonumber(msg.clearedBytes) or 0, cacheClears
     end
+  elseif t == 'landmarks' then
+    landmarks.onMessage(msg, st.anchorId, st.anchor)
   end
 end
 
@@ -1688,7 +1695,7 @@ local function onUpdate(dtReal, dtSim)
   gov:setLoading(st.placeFrames ~= nil or st.clock < st.loadingUntil or st.slowFor > SLOW_S)
   gov:setFrameContext(streaming.frameTarget(rawget(_G, 'settings')),
     not (Engine and Engine.isProgramFocused) or Engine.isProgramFocused())
-  gov:beginFrame(farfield.hasWork() or roads.hasWork())
+  gov:beginFrame(farfield.hasWork() or roads.hasWork() or landmarks.hasWork())
   gov:chargeEngine(engineTickMs())     -- what the engine spent on last frame's new tiles (governor.lua)
   for _, msg in ipairs(net.update(dtReal)) do
     local ok, err = pcall(onMessage, msg)
@@ -1739,8 +1746,10 @@ local function onUpdate(dtReal, dtSim)
     -- the roads before the far tiles: they share the governor's budget and the first to ask gets it; after a
     -- teleport the far field's hundreds of tiles took it frame after frame and the road meshes under the car
     -- came after it had passed (Brasov, Sinaia 2026-10-15: the car drove bare ground)
+    landmarks.reserve(gov, st.anchorId, st.player, M.viewAway())
     roads.update(gov, st.anchorId, st.player, M.viewAway())
     t = mark('roads', t)
+    landmarks.update(gov, st.anchorId, st.player, M.viewAway())
     farfield.update(gov, (gov.w1 or dtReal * 1000) / 1000, st.cam, st.player)
     t = mark('far', t)
     sea.update(st.anchorId, st.player)
@@ -1890,6 +1899,7 @@ local function onClientEndMission()
   groundcover.reset() -- its objects go with the level
   groundcover.enginePatch(false)
   roads.reset()
+  landmarks.reset()
   sea.reset()
   trees.reset()
   parking.reset()
@@ -1933,6 +1943,7 @@ local function onExtensionUnloaded()
   roads.clear()
   sea.clear()
   trees.clear()
+  landmarks.reset()
   terrain.delete()
   -- M1h: the level stays loaded; give it back its sky and view distance
   horizon.restoreSky()

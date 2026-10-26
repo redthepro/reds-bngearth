@@ -1,0 +1,25 @@
+{
+  "bne_lm_lincoln_memorial_1_initialShadingGroup": {
+    "name": "bne_lm_lincoln_memorial_1_initialShadingGroup",
+    "mapTo": "bne_lm_lincoln_memorial_1_initialShadingGroup",
+    "class": "Material",
+    "version": 1.5,
+    "Stages": [
+      {
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/lincoln_memorial/textures/bne_lm_lincoln_memorial_1_initialShadingGroup.color.png",
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "metallicFactor": 0.0,
+        "roughnessFactor": 0.6
+      },
+      {},
+      {},
+      {}
+    ],
+    "doubleSided": true
+  }
+}

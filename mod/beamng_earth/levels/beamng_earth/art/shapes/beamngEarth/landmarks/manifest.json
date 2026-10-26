@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "landmarks": [
+    {
+      "id": "washington_monument",
+      "title": "Washington Monument",
+      "lat": 38.88947525,
+      "lon": -77.03524255,
+      "shape": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/washington_monument/compiled.cdae",
+      "materials": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/washington_monument/main.materials.json",
+      "height_m": 169.2955102485139,
+      "range_m": 40000,
+      "ground_offset_m": 0,
+      "exclude_ids": [
+        "dc9135b1-e8f3-4ae8-8365-7a84726f6e34"
+      ],
+      "placement_note": "Aligned with the mapped main building; metric transforms and provenance in landmark.json. Final ground/footprint fit requires live terrain review."
+    },
+    {
+      "id": "lincoln_memorial",
+      "title": "Lincoln Memorial",
+      "lat": 38.8892721,
+      "lon": -77.0501717,
+      "shape": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/lincoln_memorial/compiled.cdae",
+      "materials": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/lincoln_memorial/main.materials.json",
+      "height_m": 29.332649194611022,
+      "range_m": 40000,
+      "ground_offset_m": 0,
+      "exclude_ids": [
+        "3a32bbd6-c572-4267-8dca-f9a5839406fe"
+      ],
+      "placement_note": "Aligned with the mapped main building; metric transforms and provenance in landmark.json. Final ground/footprint fit requires live terrain review."
+    },
+    {
+      "id": "white_house",
+      "title": "White House residence",
+      "lat": 38.8977,
+      "lon": -77.0365525,
+      "shape": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/white_house/compiled.cdae",
+      "materials": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/white_house/main.materials.json",
+      "height_m": 22.08767096088836,
+      "range_m": 40000,
+      "ground_offset_m": 0,
+      "exclude_ids": [
+        "8c6f7587-d774-49f7-a28c-402463ebc8b9",
+        "ea72efba-60f7-4408-b4c3-4a6d5b7866bf",
+        "b142eb70-124a-4d0e-a11a-805835658ac1",
+        "9b8cc8a4-34b7-4099-ac4e-176e946d8bc3"
+      ],
+      "placement_note": "Aligned with the mapped main building; metric transforms and provenance in landmark.json. Final ground/footprint fit requires live terrain review."
+    }
+  ]
+}

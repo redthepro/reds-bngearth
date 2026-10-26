@@ -4,6 +4,10 @@ What changed in each release of BeamNG.Earth, newest first.
 
 ## 1.7.0 (2026-10-25)
 
+- Added an attributed DC landmark pack with compiled distance LODs for the Washington Monument, Lincoln Memorial,
+  and White House. Landmark imports share the adaptive frame budget and follow world rebases and teleports.
+- Fixed large buildings losing their main walls when their mapped parts only describe rooftop structures.
+  Preserved courtyard holes and multipolygon components in visual and collision meshes, including the Pentagon.
 - Visual streaming prioritizes the driving corridor, then the camera view, then surrounding warm-reserve tiles.
   Turning the camera reprioritizes queued tiles without unloading nearby ground or changing collision coverage.
 - Sustained slow frames reduce visual imports and tell the server to reduce visual generation. Recovery is gradual;

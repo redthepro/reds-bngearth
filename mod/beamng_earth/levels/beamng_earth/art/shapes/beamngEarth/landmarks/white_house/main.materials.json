@@ -1,0 +1,28 @@
+{
+  "bne_lm_white_house_0_The_White_House": {
+    "name": "bne_lm_white_house_0_The_White_House",
+    "mapTo": "bne_lm_white_house_0_The_White_House",
+    "class": "Material",
+    "version": 1.5,
+    "Stages": [
+      {
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/white_house/textures/bne_lm_white_house_0_The_White_House.color.png",
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "metallicFactor": 1.0,
+        "roughnessFactor": 1.0,
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/white_house/textures/bne_lm_white_house_0_The_White_House_roughnessMap.data.png",
+        "metallicMap": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/white_house/textures/bne_lm_white_house_0_The_White_House_metallicMap.data.png",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/white_house/textures/bne_lm_white_house_0_The_White_House_normalMap.normal.png"
+      },
+      {},
+      {},
+      {}
+    ],
+    "doubleSided": false
+  }
+}

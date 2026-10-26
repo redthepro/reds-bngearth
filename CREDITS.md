@@ -10,6 +10,24 @@ Status: **in use** = used by the current main branch; **branch** = on a feature 
 yet; **planned** = in the roadmap, not used yet; **reference** = consulted for research or tuning
 only, nothing redistributed. Licence notes marked *(verify)* must be re-checked before any release.
 
+## Bundled DC landmark models
+
+These models are distributed under [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/).
+The models retain their authors' licenses; the repository's code license does not replace those terms.
+
+| Model | Author and original | Changes in this fork |
+|---|---|---|
+| Washington Monument | [Takugava3DS / mikhailpagava](https://sketchfab.com/mikhailpagava), [original model](https://sketchfab.com/3d-models/washington-monument-8003b43ffd784caaab03b8b277f39b96) | Retained the source plinth/materials; replaced the inaccurate shaft with a closed tapered obelisk using NPS dimensions. Converted to a compiled static shape with a distance LOD and prepared textures. |
+| Lincoln Memorial | [MattParson](https://sketchfab.com/MattParson), [original model](https://sketchfab.com/3d-models/lincoln-memorial-5f7ac3d94d4c45b7a4054b2f60bb16cf) | Converted, scaled and oriented for the map; geometry reduced and a distance LOD added; materials/textures converted. |
+| White House | [Void / Void.com](https://sketchfab.com/Void.com), [original model](https://sketchfab.com/3d-models/the-white-house-dbdb320ba4c6427ca4f2b2c2438034f9) | Converted, scaled and oriented for the map; geometry reduced and a distance LOD added; materials/textures converted. |
+
+Each asset's `landmark.json` records its source checksum, attribution, transforms, dimensions reference,
+geometry counts and conversion warnings. Source downloads and account credentials are not included.
+Sketchfab is the hosting service; the named creators provided the models. NPS building statistics and the
+White House Historical Association supplied dimension references, linked in the asset metadata.
+
+The Pentagon uses procedural geometry from the map data below. No downloaded Pentagon model is bundled.
+
 ## Map data (downloaded at runtime by the companion server and cached on the player's disk)
 
 | Data | Provider | Used for | Licence / terms | Attribution | Status |

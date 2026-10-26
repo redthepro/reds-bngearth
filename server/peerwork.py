@@ -99,8 +99,12 @@ def source_id(server_dir=None):
 
 
 def code_id():
-    """This server's code: its sources' fingerprint (CODE_ID in a packaged app) and the native module's version. Two
-    servers with the same one build the same tiles."""
+    """Sources (frozen CODE_ID), native version and installed landmark visual exclusions.
+
+    The runtime suffix matters even in frozen apps: absent custom assets retain generic buildings,
+    so otherwise-identical installs can produce different tiles. Mesh bytes/placement do not affect
+    those generated tiles, only the effective IDs suppressed by buildings.py do.
+    """
     global _CODE_ID
     if _CODE_ID is None:
         try:
@@ -113,7 +117,10 @@ def code_id():
             native = getattr(fast._ef, "VERSION", 0)
         except Exception:
             native = 0
-        _CODE_ID = f"{src}-{native}"
+        import landmarks
+        excluded = json.dumps(landmarks.excluded_ids(), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        visuals = hashlib.sha256(excluded).hexdigest()[:16]
+        _CODE_ID = f"{src}-{native}-lm{visuals}"
     return _CODE_ID
 
 

@@ -1,0 +1,148 @@
+{
+  "asset_id": "white_house",
+  "attribution": {
+    "uid": "dbdb320ba4c6427ca4f2b2c2438034f9",
+    "title": "The White House",
+    "creator": "Void.com",
+    "creator_url": "https://sketchfab.com/Void.com",
+    "license": "Creative Commons Attribution",
+    "license_url": "http://creativecommons.org/licenses/by/4.0/",
+    "source_url": "https://sketchfab.com/3d-models/the-white-house-dbdb320ba4c6427ca4f2b2c2438034f9"
+  },
+  "source_sha256": "bc8ca06d12b929f21f66e9e9b82cad9e714a7cb50591815ea78e445236ca7333",
+  "geometry": {
+    "blender_version": "5.2.2 LTS",
+    "source_triangles": 95467,
+    "main_triangles": 29898,
+    "main_vertices": 62929,
+    "far_triangles": 4998,
+    "far_vertices": 11224
+  },
+  "transform": {
+    "source_bounds": [
+      [
+        -23.144515991210938,
+        104.49732971191406,
+        -12.85053825378418
+      ],
+      [
+        31.57401466369629,
+        158.60479736328125,
+        18.244760513305664
+      ]
+    ],
+    "oriented_bounds": [
+      [
+        -47.8671457773045,
+        -151.5478407600902,
+        -38.94052965000468
+      ],
+      [
+        3.622747085213448,
+        -98.28837904750769,
+        -16.73521192698399
+      ]
+    ],
+    "scale": 0.9947018654,
+    "oriented_source_origin": [
+      -22.12434501,
+      -126.57414803,
+      -38.94052965000468
+    ],
+    "source_origin": [
+      4.2175694235583245,
+      134.08853402477396,
+      -5.416972614778541
+    ],
+    "tilt_x_degrees": -14.5548736113,
+    "tilt_y_degrees": 0.0,
+    "yaw_degrees": 171.966205796,
+    "rotation_order": "X tilt, Y tilt, Z yaw; then center and uniform scale",
+    "center": "base",
+    "target_height": null,
+    "target_width": null,
+    "dimensions_source": "https://www.whitehousehistory.org/press-room/press-backgrounders/white-house-dimensions%C2%A0",
+    "crop_oriented_bounds": [
+      [
+        -47.864,
+        -155.0,
+        -1000000.0
+      ],
+      [
+        3.6153,
+        -90.0,
+        1000000.0
+      ]
+    ]
+  },
+  "bounds": [
+    [
+      -25.60641194385834,
+      -24.841378744547136,
+      0.0
+    ],
+    [
+      25.61068053573441,
+      28.135907171158568,
+      22.08767096088836
+    ]
+  ],
+  "materials": [
+    {
+      "source_name": "The_White_House",
+      "engine_name": "bne_lm_white_house_0_The_White_House"
+    }
+  ],
+  "textures": [
+    {
+      "source": "bne_lm_white_house_0_The_White_House.color.png",
+      "file": "bne_lm_white_house_0_The_White_House.color.dds",
+      "size": [
+        1024,
+        1024
+      ],
+      "dxgi_format": 99,
+      "bytes": 1398276
+    },
+    {
+      "source": "bne_lm_white_house_0_The_White_House_metallicMap.data.png",
+      "file": "bne_lm_white_house_0_The_White_House_metallicMap.data.dds",
+      "size": [
+        1024,
+        1024
+      ],
+      "dxgi_format": 80,
+      "bytes": 699212
+    },
+    {
+      "source": "bne_lm_white_house_0_The_White_House_normalMap.normal.png",
+      "file": "bne_lm_white_house_0_The_White_House_normalMap.normal.dds",
+      "size": [
+        1024,
+        1024
+      ],
+      "dxgi_format": 83,
+      "bytes": 1398276
+    },
+    {
+      "source": "bne_lm_white_house_0_The_White_House_roughnessMap.data.png",
+      "file": "bne_lm_white_house_0_The_White_House_roughnessMap.data.dds",
+      "size": [
+        1024,
+        1024
+      ],
+      "dxgi_format": 80,
+      "bytes": 699212
+    }
+  ],
+  "texture_format": "dds",
+  "virtual_path": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/white_house",
+  "lod_pixels": 100.0,
+  "warnings": [
+    "The_White_House: duplicate UV2 verified and mapped to UV0",
+    "The_White_House: duplicate UV1 verified and mapped to UV0",
+    "Source geometry clipped to the recorded oriented box before decimation; cut surfaces are not capped"
+  ],
+  "source_units": "glTF metres; geographic dimensions must be verified separately",
+  "modified": "Converted to Z-up static compiled shape, centered/scaled/rotated as recorded; camera LOD decimated; textures converted"
+}

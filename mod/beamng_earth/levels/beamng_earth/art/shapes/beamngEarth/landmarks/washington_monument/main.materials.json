@@ -1,0 +1,56 @@
+{
+  "bne_lm_washington_monument_0_Monument": {
+    "name": "bne_lm_washington_monument_0_Monument",
+    "mapTo": "bne_lm_washington_monument_0_Monument",
+    "class": "Material",
+    "version": 1.5,
+    "Stages": [
+      {
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/washington_monument/textures/bne_lm_washington_monument_0_Monument.color.png",
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "metallicFactor": 1.0,
+        "roughnessFactor": 1.0,
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/washington_monument/textures/bne_lm_washington_monument_0_Monument_roughnessMap.data.png",
+        "metallicMap": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/washington_monument/textures/bne_lm_washington_monument_0_Monument_metallicMap.data.png",
+        "ambientOcclusionMap": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/washington_monument/textures/bne_lm_washington_monument_0_Monument_ambientOcclusionMap.data.png",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/washington_monument/textures/bne_lm_washington_monument_0_Monument_normalMap.normal.png"
+      },
+      {},
+      {},
+      {}
+    ],
+    "doubleSided": true
+  },
+  "bne_lm_washington_monument_1_Wall": {
+    "name": "bne_lm_washington_monument_1_Wall",
+    "mapTo": "bne_lm_washington_monument_1_Wall",
+    "class": "Material",
+    "version": 1.5,
+    "Stages": [
+      {
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/washington_monument/textures/bne_lm_washington_monument_1_Wall.color.png",
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "metallicFactor": 1.0,
+        "roughnessFactor": 1.0,
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/washington_monument/textures/bne_lm_washington_monument_1_Wall_roughnessMap.data.png",
+        "metallicMap": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/washington_monument/textures/bne_lm_washington_monument_1_Wall_metallicMap.data.png",
+        "ambientOcclusionMap": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/washington_monument/textures/bne_lm_washington_monument_1_Wall_ambientOcclusionMap.data.png",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/landmarks/washington_monument/textures/bne_lm_washington_monument_1_Wall_normalMap.normal.png"
+      },
+      {},
+      {},
+      {}
+    ],
+    "doubleSided": true
+  }
+}
