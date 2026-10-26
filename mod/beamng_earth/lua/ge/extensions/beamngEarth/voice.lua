@@ -3,7 +3,10 @@ local M = {}
 local net = require('beamngEarth/net')
 local enabled, handlers, elapsed = false, false, 0
 local held, config, state, status = {}, nil, {}, {}
-local options = { enabled=false, volumes={1,1,1}, muted={}, input='', output='' }
+-- `server` is deliberately separate from the master opt-in. Nearby and group
+-- chat stay available to an opted-in player, while all-server chat needs an
+-- additional explicit choice every multiplayer session.
+local options = { enabled=false, server=false, volumes={1,1,1}, muted={}, input='', output='' }
 local function send(action, data) net.send({ type='voice', action=action, data=data }) end
 local function decode(raw)
   if type(raw) ~= 'string' or #raw > 65536 then return nil end
@@ -25,12 +28,16 @@ function M.onServerHello()
 end
 function M.talk(role, down)
   if role ~= 'p' and role ~= 's' and role ~= 'g' then return end
+  if role == 's' and not options.server then
+    held.s = nil
+    return
+  end
   held[role] = down == true or down == 1
   if not held[role] then net.send({type='voice',action='ptt',talk=''}) end
 end
 function M.control(raw)
   local d = type(raw) == 'table' and raw or decode(raw); if not d then return end
-  options = { enabled=d.enabled == true, volumes=d.volumes or {1,1,1},
+  options = { enabled=d.enabled == true, server=d.server == true, volumes=d.volumes or {1,1,1},
     muted=d.muted or {}, input=d.input or '', output=d.output or '' }
   enabled = options.enabled
   if not enabled then held = {} end
@@ -46,7 +53,7 @@ function M.uiState()
 end
 function M.reset()
   local hadVoice = config ~= nil or enabled
-  enabled, options.enabled = false, false
+  enabled, options.enabled, options.server = false, false, false
   held, config, state, status = {}, nil, {}, {}
   if hadVoice then send('control',options); net.send({type='voice',action='reset'}) end
 end
@@ -55,16 +62,19 @@ function M.update(dt, anchor, player, inSession, focused)
     AddEventHandler('bngeVoiceConfig',onConfig,'beamngEarth')
     AddEventHandler('bngeVoiceState',onState,'beamngEarth'); handlers = true
   end
-  if not inSession or not anchor or not player then
-    if config then M.reset() end
+  -- A player/anchor can be unavailable for a frame as a menu closes or the
+  -- world rebases. That is not a BeamMP leave and must not revoke opt-in.
+  if not inSession then
+    if config or enabled then M.reset() end
     held = {}; return
   end
+  if not anchor or not player then held = {}; return end
   if not focused then held = {} end
   elapsed = elapsed + dt
   if elapsed < 0.1 then return end
   elapsed = 0
   local x,y,z = anchor:enuToEcef(player.x,player.y,player.z or 0)
-  local role = enabled and (held.s and 's' or held.g and 'g' or held.p and 'p' or '') or ''
+  local role = enabled and (options.server and held.s and 's' or held.g and 'g' or held.p and 'p' or '') or ''
   if rawget(_G,'TriggerServerEvent') then
     TriggerServerEvent('bngeVoicePose',jsonEncode({pos={x,y,z},talk=role}))
   end

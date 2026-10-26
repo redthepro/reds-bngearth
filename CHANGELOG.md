@@ -2,6 +2,14 @@
 
 What changed in each release of BeamNG.Earth, newest first.
 
+## 1.8.1 (2026-10-26)
+
+- Kept voice opt-in intact when the game briefly has no player/terrain anchor while a menu closes or the world
+  rebases; only an actual multiplayer leave clears it.
+- Made global/server voice a separately joined channel, off by default, while preserving nearby and private-group
+  push-to-talk for players who opt into voice.
+- Added a push-to-talk-only microphone activity meter and capture verification indicator in the voice settings.
+
 ## 1.8.0 (2026-10-25)
 
 - Added opt-in multiplayer voice: 80 m positional proximity, server-wide, and private groups.

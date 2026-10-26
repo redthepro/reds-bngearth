@@ -6,7 +6,7 @@ StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Container]
-Image=localhost/beamng-earth-voice:1.8.0
+Image=localhost/beamng-earth-voice:1.8.1
 Pull=never
 ContainerName=beamng-earth-voice
 UserNS=keep-id

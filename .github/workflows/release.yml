@@ -46,6 +46,10 @@ jobs:
           previous=$(git show HEAD^:VERSION 2>/dev/null | tr -d '[:space:]' || true)
           # A version bump publishes the named release; later commits keep unique build tags.
           if [ "$previous" != "$base" ]; then
+            # A named release must have release notes for precisely the version
+            # being published. This prevents an artifact/release-name bump from
+            # silently leaving its changelog and update information behind.
+            grep -q "^## $base" CHANGELOG.md
             v="$base"
           else
             v="$base-build.$GITHUB_RUN_NUMBER.g${GITHUB_SHA:0:12}"
@@ -84,6 +88,12 @@ jobs:
         run: python tools/build_app.py --appimagetool "$PWD/appimagetool.AppImage"
       - name: Package the matching BeamMP plugin and mod
         run: python tools/package.py --beammp
+      - name: Verify version-stamped Linux artifacts
+        env:
+          BUILD_VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          test -f "dist/BeamNG.Earth-${BUILD_VERSION}-x86_64.AppImage"
+          test -f "dist/BeamNG.Earth-BeamMP-Server-${BUILD_VERSION}.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: beammp
@@ -124,6 +134,13 @@ jobs:
         run: python tools/build_bootloader.py
       - name: Build the .exe
         run: python tools/build_app.py --require-own-bootloader
+      - name: Verify version-stamped Windows artifact
+        env:
+          BUILD_VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          if (-not (Test-Path -LiteralPath "dist/BeamNG.Earth-$env:BUILD_VERSION.exe" -PathType Leaf)) {
+            throw "Windows artifact did not receive build version $env:BUILD_VERSION"
+          }
       - name: Smoke test (the packaged server starts and answers --help)
         shell: bash
         run: |

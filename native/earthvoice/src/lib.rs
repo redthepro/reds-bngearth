@@ -82,6 +82,8 @@ struct Core {
     index: u64,
     next: f64,
     last_error: String,
+    mic_level: f32,
+    mic_at: Instant,
 }
 impl Core {
     fn new() -> Result<Self, opus::Error> {
@@ -99,6 +101,8 @@ impl Core {
             index: 0,
             next: 0.,
             last_error: String::new(),
+            mic_level: 0.,
+            mic_at: Instant::now() - Duration::from_secs(1),
         })
     }
     fn input<T>(&mut self, data: &[T], channels: usize, rate: u32)
@@ -114,6 +118,7 @@ impl Core {
         if self.mode == 0 || channels == 0 {
             return;
         }
+        let mut peak = 0f32;
         for frame in data.chunks_exact(channels) {
             let value = frame.iter().map(|v| f32::from_sample(*v)).sum::<f32>() / channels as f32;
             let value = if value.is_finite() {
@@ -121,6 +126,7 @@ impl Core {
             } else {
                 0.
             };
+            peak = peak.max(value.abs());
             while self.next <= self.index as f64 {
                 let alpha = (self.next - self.index as f64 + 1.).clamp(0., 1.) as f32;
                 self.capture
@@ -143,6 +149,10 @@ impl Core {
             self.previous = value;
             self.index += 1;
         }
+        // This diagnostic meter changes only while PTT has opened the stream;
+        // raw microphone samples remain in the encoder path.
+        self.mic_level = self.mic_level.max(peak);
+        self.mic_at = Instant::now();
     }
     fn output<T>(&mut self, data: &mut [T], channels: usize, rate: u32)
     where
@@ -370,6 +380,8 @@ impl AudioEngine {
             s.next = 0.;
             s.previous = 0.;
             s.encoder.reset_state().map_err(error)?;
+            s.mic_level = 0.;
+            s.mic_at = Instant::now() - Duration::from_secs(1);
             s.mode = mode;
             s.lease = Instant::now();
         }
@@ -420,6 +432,17 @@ impl AudioEngine {
     }
     fn last_error(&self) -> PyResult<String> {
         Ok(self.state.lock().map_err(error)?.last_error.clone())
+    }
+    /// Peak input level and recent-capture state, without exposing PCM.
+    fn microphone_level(&self) -> PyResult<(f32, bool)> {
+        let mut s = self.state.lock().map_err(error)?;
+        if self.active.get() == 0 || s.mic_at.elapsed() > Duration::from_millis(300) {
+            s.mic_level = 0.;
+            return Ok((0., false));
+        }
+        let value = s.mic_level;
+        s.mic_level *= 0.5;
+        Ok((value, true))
     }
     fn close(&mut self) {
         self.input.take();

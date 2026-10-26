@@ -32,9 +32,14 @@
         <summary class="category-title">Multiplayer voice</summary>
         <div class="category-items">
           <label><input type="checkbox" v-model="voiceOptions.enabled" @change="setVoice" /> Enable voice for this session</label>
-          <p>Hold Alt+V for nearby players (80 m), Alt+N for the server, or Alt+B for your group. Rebind in Controls.</p>
+          <label><input type="checkbox" v-model="voiceOptions.server" :disabled="!voiceOptions.enabled" @change="setVoice" /> Join global/server voice chat</label>
+          <p>Nearby and private-group chat are available when voice is enabled. Global/server chat is off by default and requires joining it above. Hold Alt+V for nearby players (80 m), Alt+N for global chat, or Alt+B for your group. Rebind in Controls.</p>
           <p>{{ voice.status?.error || (voice.available ? 'Connected channels: ' + (voice.status?.connected || []).join(', ') : 'Join a server with Earth voice enabled.') }}</p>
           <p v-if="voice.status?.talk">Transmitting: {{ voice.status.talk === 'p' ? 'Nearby' : voice.status.talk === 's' ? 'Server' : 'Group' }}</p>
+          <div class="voice-mic-status" :class="{ active: voice.status?.microphone?.active, detected: voice.status?.microphone?.detected }">
+            <span>Microphone {{ voice.status?.microphone?.active ? (voice.status?.microphone?.detected ? 'receiving audio' : 'open — speak to verify') : 'idle — hold a push-to-talk key to test' }}</span>
+            <meter min="0" max="1" :value="voice.status?.microphone?.level || 0"></meter>
+          </div>
           <label>Microphone <select v-model="voiceOptions.input" @change="setVoice"><option value="">System default</option><option v-for="name in voice.status?.inputs || []" :key="name">{{ name }}</option></select></label>
           <label>Output <select v-model="voiceOptions.output" @change="setVoice"><option value="">System default</option><option v-for="name in voice.status?.outputs || []" :key="name">{{ name }}</option></select></label>
           <div v-for="(label, i) in ['Nearby', 'Server', 'Group']" :key="label">
@@ -234,7 +239,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from "vue"
 const voice = ref({})
-const voiceOptions = ref({ enabled: false, volumes: [1, 1, 1], muted: [], input: '', output: '' })
+const voiceOptions = ref({ enabled: false, server: false, volumes: [1, 1, 1], muted: [], input: '', output: '' })
 let voiceTimer = null
 let voiceInitialized = false
 let voiceWriteAt = 0
@@ -244,9 +249,10 @@ function refreshVoice() {
     const array = value => Array.isArray(value) ? value : []
     data.status = data.status || {}
     for (const key of ['connected', 'speaking', 'inputs', 'outputs']) data.status[key] = array(data.status[key])
+    data.status.microphone = data.status.microphone || { active: false, level: 0, detected: false }
     voice.value = data
     if (!voiceInitialized && data.options) {
-      voiceOptions.value = { ...data.options, muted: array(data.options.muted),
+      voiceOptions.value = { ...data.options, server: data.options.server === true, muted: array(data.options.muted),
         volumes: array(data.options.volumes).length === 3 ? data.options.volumes : [1, 1, 1] }
       voiceInitialized = true
     }

@@ -5,9 +5,11 @@ the in-game BeamNG.Earth settings. Capture runs only while a granted push-to-tal
 key is held; losing focus, leaving the session, or missing the short control
 lease stops transmission. It is disabled each new game session.
 
-Default keys (rebind in Controls): Alt+V nearby (80 m), Alt+N server, Alt+B group.
-The settings page includes devices, three volume controls, player mutes, speaking
-indicators, group creation, owner invitations/removal, accepting and leaving.
+Default keys (rebind in Controls): Alt+V nearby (80 m), Alt+N global/server, Alt+B group.
+Nearby and group voice become available after the session opt-in; global/server voice is a separate setting and
+stays off until that player joins it. The settings page includes devices, three volume controls, player mutes,
+speaking indicators, a live push-to-talk microphone level/verification state, group creation, owner
+invitations/removal, accepting and leaving. The level is diagnostic only: it never exposes or retains raw PCM.
 Groups support 16 members; invitations expire after 30 seconds. Concurrent talker
 limits are 4 server, 6 group, and 8 per proximity neighborhood.
 
@@ -28,7 +30,7 @@ the service to 2 CPUs, 2 GiB RAM and 128 processes; 300 voice connections cover
 100-player load-test result.
 
 1. Copy this directory to the host and build with `podman build -t
-   localhost/beamng-earth-voice:1.8.0 <directory>`.
+   localhost/beamng-earth-voice:1.8.1 <directory>`.
 2. Run `python3 initialize.py --data ~/beamng-earth-voice-data --game
    ~/beamng-earth-voice-registry --host YOUR_PUBLIC_IP_OR_DNS`. It generates
    a stable certificate and private secrets without printing credentials.

@@ -7,6 +7,8 @@ Optional nearby, server-wide and private-group voice uses the matching companion
 and a self-hosted Mumble service. Setup files are included in `VoiceService/`;
 see `VoiceService/README.md`. Voice requires **64738 TCP + UDP** in addition to
 the game's port, and remains disabled until each player enables it in settings.
+Nearby and group voice are then available; server-wide voice additionally requires
+that player to explicitly join the global channel.
 
 Install the matching app, mod and server plugin from this fork. Compute sharing now authenticates the active
 anchor group using random session credentials relayed by the plugin. Old plugins/clients fall back to local

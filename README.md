@@ -2,7 +2,7 @@
 
 This is [redthepro/reds-bngearth](https://github.com/redthepro/reds-bngearth), a fork of
 [TecnaGamer's BeamNG.Earth](https://github.com/TecnaGamer/BeamNG.Earth) focused on terrain loading,
-driving quality, and reliability. **Version 1.8.0 includes upstream 1.6.2-beta plus the changes below.**
+driving quality, and reliability. **Version 1.8.1 includes upstream 1.6.2-beta plus the changes below.**
 The original streamed world, map data integration, and BeamMP foundation come from TecnaGamer and the
 upstream contributors.
 
@@ -12,25 +12,30 @@ real curvature of the Earth.
 
 [Download this fork](https://github.com/redthepro/reds-bngearth/releases) ·
 [Report a fork issue](https://github.com/redthepro/reds-bngearth/issues) ·
-[Installation](#install-and-play) · [Voice chat](#multiplayer-voice-in-180) ·
+[Installation](#install-and-play) · [Voice chat](#multiplayer-voice-in-181) ·
 [Changelog](CHANGELOG.md) · [Build status](https://github.com/redthepro/reds-bngearth/actions/workflows/release.yml)
 
-## Multiplayer voice in 1.8.0
+## Multiplayer voice in 1.8.1
 
 This release adds **nearby positional voice, a server-wide channel, and private groups** to the fork's
 terrain and driving improvements. Audio capture, Opus encoding, playback, and spatial mixing run in native
 code in the companion. The downloadable Windows EXE and Linux AppImage include the voice client.
 
 Join a BeamMP server with Earth voice enabled, open **BeamNG.Earth settings**, and enable voice for that
-session. Choose your microphone/output and adjust each channel's volume there. Hold a key to talk:
+session. Nearby and private-group voice are then available; server-wide voice has its own **Join global/server
+voice chat** switch and remains off until the player chooses it. Choose your microphone/output and adjust each
+channel's volume there. Hold a key to talk:
 
 | Channel | Default key | Who hears you |
 | --- | --- | --- |
 | Nearby | **Alt+V** | Players within 80 m, with distance fading and stereo direction |
-| Server | **Alt+N** | Players connected to the server's voice service |
+| Global/server | **Alt+N** | Players connected to the server's voice service, after explicitly joining it |
 | Group | **Alt+B** | Members of your private group |
 
-Keys can be rebound in Controls. The settings page includes player mutes and speaking indicators.
+Keys can be rebound in Controls. The settings page includes player mutes and speaking indicators. While holding a
+push-to-talk key it also shows a live microphone level: **receiving audio** confirms the selected microphone's
+capture callback is seeing sound; **open — speak to verify** means it is live but has not crossed the indicator
+threshold. No microphone capture occurs while push-to-talk is idle.
 Create a private group there, invite players, accept invitations, or leave; the owner can remove members.
 Groups support 16 members and invitations expire after 30 seconds. Voice is opt-in again after leaving
 multiplayer; releasing the key or losing game focus stops transmission.
@@ -89,7 +94,7 @@ Compared with upstream 1.6.2-beta:
   startup checks. Successful pushes publish a Windows EXE, Linux AppImage, matching BeamMP server ZIP, and
   `SHA256SUMS.txt`. Version bumps publish named releases; other commits get a tag containing the workflow run
   and commit.
-- **Optional multiplayer voice.** Nearby positional, server-wide, and private-group push-to-talk channels run
+- **Optional multiplayer voice.** Nearby positional, explicitly joined server-wide, and private-group push-to-talk channels run
   through a self-hosted Mumble service and native CPAL/Opus audio in the companion. In-game controls include
   devices, channel volumes, player mutes, group invitations and speaking indicators. Voice is disabled until
   enabled for the session; it uses a separate TLS connection. See [voice setup](deploy/voice/README.md).
@@ -292,7 +297,7 @@ Player downloads: `python3 tools/build_app.py` builds this system's AppImage / .
 docstring; for the .exe run `tools/build_bootloader.py` first: a bootloader built from source, fewer antivirus
 false positives). Every push to `main` runs the Windows/Linux regression suites, compiles the Rust kernels,
 builds and smoke-tests both executables, and publishes a GitHub release with the matching BeamMP package and
-`SHA256SUMS.txt`. A version bump publishes its named release, such as **`v1.8.0`**. Other commits use
+`SHA256SUMS.txt`. A version bump publishes its named release, such as **`v1.8.1`**. Other commits use
 `v<VERSION>-build.<workflow-run-number>.g<commit-sha>`. The selected version is embedded in the downloads.
 Failed tests or builds prevent publication. Separate pushes keep their own builds; an older build finishing late
 cannot replace the current main build as Latest. Preview/alpha/rc versions remain prereleases.

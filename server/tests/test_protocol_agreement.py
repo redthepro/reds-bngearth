@@ -151,9 +151,11 @@ TERRAIN = {"cx": F(NUM), "cy": F(NUM), "heightmap": F(str), "size": F(int), "squ
 LANDMARK_ROW = {"id": F(str), "title": F(str), "lat": F(NUM), "lon": F(NUM),
                 "shape": F(str), "materials": F(str), "height_m": F(NUM),
                 "x": F(NUM), "y": F(NUM), "z": F(NUM)}
+VOICE_MICROPHONE = {"active": F(bool), "level": F(NUM), "detected": F(bool)}
 SERVER_TO_MOD = {
     'voice_status': {'enabled': F(bool), 'error': F(str), 'connected': F(list), 'talk': F(str),
-                     'speaking': F(list), 'inputs': F(list), 'outputs': F(list)},
+                     'speaking': F(list), 'inputs': F(list), 'outputs': F(list),
+                     'microphone': F(dict)},
     "server_list": {"servers": F(list, OPT), "error": F(str, OPT)},   # earthd.server_list (the list service)
     "geocode_result": {"id": F(int), "results": F(list), "error": F(str, OPT)},   # geocode.py (Photon)
     "route_result": {"id": F(int), "points": F(list), "dist": F(NUM), "dur": F(NUM), "error": F(str, OPT)},  # OSRM
@@ -812,6 +814,13 @@ class ServerMessagesTest(test_server.ServerHarness):
                     self.assertTrue(row[field].endswith(suffix), row)
                     self.assertNotIn("..", row[field])
                     self.assertNotIn("\\", row[field])
+        if kind == "voice_status":
+            microphone = m["microphone"]
+            self.assertEqual(set(microphone), set(VOICE_MICROPHONE), microphone)
+            for f, (types, _) in VOICE_MICROPHONE.items():
+                self.assertIsInstance(microphone[f], types, (f, microphone))
+            self.assertTrue(math.isfinite(microphone["level"]))
+            self.assertTrue(0 <= microphone["level"] <= 1)
         if kind == "far_tile":
             self.assertRegex(m["shape"], SHAPE_RE)
             self.assertIn(m["state"], ("group", "prefetch"))

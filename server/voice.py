@@ -53,7 +53,8 @@ class VoiceManager:
     def _run(self):
         engine = None
         clients = {}
-        session, state, options = {}, {}, {'enabled': False, 'volumes': [1., 1., 1.], 'muted': []}
+        session, state, options = {}, {}, {'enabled': False, 'server': False,
+                                            'volumes': [1., 1., 1.], 'muted': []}
         listener, right = None, (1., 0., 0.)
         held, held_at, state_at, mode = '', 0., 0., ''
         retry_at, status_at = 0., 0.
@@ -66,10 +67,16 @@ class VoiceManager:
             nonlocal last_status
             for uid, at in list(speaking.items()):
                 if time.monotonic() - at > 1: speaking.pop(uid, None)
+            microphone = {'active': False, 'level': 0., 'detected': False}
+            if engine:
+                level, active = engine.microphone_level()
+                level = max(0., min(1., float(level)))
+                microphone = {'active': bool(active), 'level': level,
+                              'detected': bool(active and level >= .012)}
             message = {'type': 'voice_status', 'enabled': options['enabled'], 'error': error,
                          'connected': [r for r, c in clients.items() if c.ready],
                          'talk': mode, 'speaking': [uid for uid, at in speaking.items() if time.monotonic()-at < .3],
-                         'inputs': inputs, 'outputs': outputs}
+                         'inputs': inputs, 'outputs': outputs, 'microphone': microphone}
             if message != last_status:
                 self.notify(message)
                 last_status = message
@@ -131,6 +138,7 @@ class VoiceManager:
                         elif action == 'control':
                             data = msg.get('data', {})
                             options['enabled'] = data.get('enabled') is True
+                            options['server'] = data.get('server') is True
                             volumes = data.get('volumes', [1., 1., 1.])
                             if len(volumes) != 3 or not all(isinstance(v, (int,float)) and math.isfinite(v) for v in volumes):
                                 raise ValueError('invalid voice volumes')
@@ -165,7 +173,14 @@ class VoiceManager:
                             inputs, outputs = native.devices()
                         if engine is None:
                             engine = native.AudioEngine(options['input'], options['output'])
-                        roles = ('p', 's', 'g') if state.get('group') else ('p', 's')
+                        roles = ['p']
+                        if options['server']:
+                            roles.append('s')
+                        if state.get('group'):
+                            roles.append('g')
+                        for role in tuple(clients):
+                            if role not in roles:
+                                clients.pop(role).close()
                         for role in roles:
                             if role not in clients:
                                 c = MumbleClient(session['host'], int(session['port']), session['fingerprint'],
