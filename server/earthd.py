@@ -80,6 +80,7 @@ from dataclasses import dataclass, field, replace  # noqa: E402
 import numpy as np  # noqa: E402
 import streaming  # noqa: E402
 import budget  # noqa: E402
+import voice as voicemod  # noqa: E402
 from PIL import Image  # noqa: E402
 
 import blockworker  # noqa: E402
@@ -2499,6 +2500,7 @@ class Connection:
         self.loop = asyncio.get_running_loop()
         self.peer = writer.get_extra_info("peername")
         self.tasks = set()
+        self.voice = None
         self.active = None              # committed anchor id
         self.block = None               # farfield.Block of the committed terrain
         self.pending_block = None       # the last prepare_terrain of the active anchor
@@ -2836,6 +2838,8 @@ class Connection:
             log.warning("client %s: %s", self.peer, e)
         finally:
             self.s.connections.discard(self)
+            if self.voice is not None:
+                self.voice.close()
             if not self.s.connections:
                 self.s.share_stop()
             self.s.slots_let_go(list(self.slot_holds))
@@ -2858,7 +2862,17 @@ class Connection:
 
     def dispatch(self, msg):
         kind = msg["type"]
-        if kind == "hello":
+        if kind == "voice":
+            if self.voice is None:
+                def notify(message):
+                    def deliver():
+                        if not self.writer.is_closing():
+                            self.send(message)
+                    if not self.loop.is_closed():
+                        self.loop.call_soon_threadsafe(deliver)
+                self.voice = voicemod.VoiceManager(notify)
+            self.voice.handle(msg)
+        elif kind == "hello":
             lay = self.s.layout
             fmt = msg.get("format", lay.format)
             if msg.get("protocol") != PROTOCOL:

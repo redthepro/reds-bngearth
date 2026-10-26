@@ -30,13 +30,20 @@ jobs:
         run: python -m pip install -r server/requirements.txt lupa
       - name: LuaJIT (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y luajit
+        run: sudo apt-get update && sudo apt-get install -y luajit libasound2-dev cmake
+      - name: CMake for bundled Opus
+        if: runner.os == 'Windows'
+        run: python -m pip install cmake
       - name: Build native kernels from the tested sources
         run: python tools/build_native.py
       - name: Server list service regression tests
         run: cargo test --manifest-path native/serverlist/Cargo.toml --locked
       - name: BeamMP port mapping maintenance regression
         run: python deploy/beammp-olympus/test_upnp_renew.py
+      - name: Voice identity policy and native audio regression
+        run: |
+          python deploy/voice/test_policy.py
+          cargo test --locked --manifest-path native/earthvoice/Cargo.toml
       - name: Python regression suite
         run: python tools/run_tests.py --par 2 --timeout 1500
       - name: Lua regression suite

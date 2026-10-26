@@ -1,0 +1,8 @@
+FROM docker.io/mumblevoip/mumble-server@sha256:2373aaf071dfcea95b0d45bc2ddf6c10318674a313a7e4816e826e9ba4bca942
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-zeroc-ice zeroc-ice-slice \
+    && rm -rf /var/lib/apt/lists/*
+COPY . /opt/voice/
+RUN chmod -R a+rX /opt/voice
+USER 1000:1000
+ENTRYPOINT ["/usr/bin/python3", "/opt/voice/supervise.py"]

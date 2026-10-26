@@ -71,5 +71,25 @@ def main():
     print("built", dst)
 
 
+def build_voice():
+    """Separate native audio module; bundled Opus, no Python audio callbacks."""
+    crate = os.path.join(ROOT, 'native', 'earthvoice')
+    if '--windows' in sys.argv[1:]:
+        print('earthfast cross-build complete; build native audio on Windows (as release CI does).')
+        return
+    rel = os.path.join(crate, 'target', 'release')
+    if sys.platform.startswith('linux') and shutil.which('cargo-zigbuild') and shutil.which('zig'):
+        subprocess.run(['cargo', 'zigbuild', '--release', '--locked', '--target', f'{LINUX_TARGET}.{LINUX_GLIBC}'],
+                       cwd=crate, check=True)
+        rel = os.path.join(crate, 'target', LINUX_TARGET, 'release')
+    else:
+        subprocess.run(['cargo', 'build', '--release', '--locked'], cwd=crate, check=True)
+    name = 'earthvoice.dll' if sys.platform == 'win32' else ('libearthvoice.dylib' if sys.platform == 'darwin' else 'libearthvoice.so')
+    dst = os.path.join(ROOT, 'server', 'earthvoice.pyd' if sys.platform == 'win32' else 'earthvoice.abi3.so')
+    install(os.path.join(rel, name), dst)
+    print('built', dst)
+
+
 if __name__ == "__main__":
     main()
+    build_voice()

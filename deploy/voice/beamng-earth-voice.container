@@ -1,0 +1,35 @@
+[Unit]
+Description=BeamNG.Earth opt-in voice and private authenticator
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Container]
+Image=localhost/beamng-earth-voice:1.7.0
+Pull=never
+ContainerName=beamng-earth-voice
+UserNS=keep-id
+User=1000
+Group=1000
+Volume=%h/beamng-earth-voice-data:/data:z
+Volume=%h/beamng-earth-server/data/voice:/game:z
+PublishPort=0.0.0.0:64738:64738/tcp
+PublishPort=0.0.0.0:64738:64738/udp
+ReadOnly=true
+ReadOnlyTmpfs=true
+NoNewPrivileges=true
+DropCapability=all
+PidsLimit=128
+PodmanArgs=--cpus=2 --memory=2g --memory-swap=2g
+StopTimeout=15
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=5
+UMask=0077
+TimeoutStartSec=60
+
+[Install]
+WantedBy=default.target

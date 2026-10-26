@@ -174,3 +174,16 @@ BWM_Weather, TAA Standalone, PerformanceTweaker, Enhanced Vehicle FX, Realistic 
 Dynamic Damage Particles, Dynamic Scratches, SparkMod: other authors' mods the project owner uses;
 BeamNG.Earth only coexists with them (e.g. the weather module backs off when BWM_Weather drives the
 weather). The pause-menu integration follows the pattern of the TAA Standalone mod.
+
+## Multiplayer voice
+
+- [Mumble](https://github.com/mumble-voip/mumble), The Mumble Developers, BSD-3-Clause:
+  wire protocol and vendored v1.5.939 Ice schema. Hosting uses its official server image.
+- [CPAL 0.16](https://github.com/RustAudio/cpal), RustAudio contributors, Apache-2.0:
+  native audio device capture and playback.
+- [libopus 1.6.1](https://opus-codec.org/), Xiph.Org and contributors, BSD-3-Clause:
+  statically bundled through opusic-sys 0.7.5 (BSD-3-Clause), with opus-rs 0.4.0
+  bindings (MIT / Apache-2.0).
+
+License notices ship in `mod/beamng_earth/art/voice/licenses/`, including with the
+executable's bundled mod files and the BeamMP client ZIP.

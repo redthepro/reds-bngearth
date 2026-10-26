@@ -302,6 +302,8 @@ if MP and MP.RegisterEvent then
   MP.CreateEventTimer('BNGE_tick', G.TICK_MS)
   print(string.format('[BeamNG.Earth] plugin loaded (players share world building on TCP port %s)',
     tostring(G.config().sharePort or 'their own default')))
+  local okVoice, errVoice = pcall(dofile, 'Resources/Server/BeamNGEarth/lib/voice.lua')
+  if not okVoice then print('[BeamNG.Earth] voice unavailable: ' .. tostring(errVoice)) end
 end
 
 return G

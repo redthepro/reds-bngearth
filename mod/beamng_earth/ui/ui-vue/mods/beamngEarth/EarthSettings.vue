@@ -28,6 +28,31 @@
 
     <!-- Main Scrollable List -->
     <div class="options-list-scroll">
+      <details class="category-block">
+        <summary class="category-title">Multiplayer voice</summary>
+        <div class="category-items">
+          <label><input type="checkbox" v-model="voiceOptions.enabled" @change="setVoice" /> Enable voice for this session</label>
+          <p>Hold Alt+V for nearby players (80 m), Alt+N for the server, or Alt+B for your group. Rebind in Controls.</p>
+          <p>{{ voice.status?.error || (voice.available ? 'Connected channels: ' + (voice.status?.connected || []).join(', ') : 'Join a server with Earth voice enabled.') }}</p>
+          <p v-if="voice.status?.talk">Transmitting: {{ voice.status.talk === 'p' ? 'Nearby' : voice.status.talk === 's' ? 'Server' : 'Group' }}</p>
+          <label>Microphone <select v-model="voiceOptions.input" @change="setVoice"><option value="">System default</option><option v-for="name in voice.status?.inputs || []" :key="name">{{ name }}</option></select></label>
+          <label>Output <select v-model="voiceOptions.output" @change="setVoice"><option value="">System default</option><option v-for="name in voice.status?.outputs || []" :key="name">{{ name }}</option></select></label>
+          <div v-for="(label, i) in ['Nearby', 'Server', 'Group']" :key="label">
+            <label>{{ label }} volume <input type="range" min="0" max="2" step="0.05" v-model.number="voiceOptions.volumes[i]" @change="setVoice" /></label>
+          </div>
+          <p v-if="voice.state?.invite">Group invite from {{ voice.state.roster?.[voice.state.invite]?.name || voice.state.invite }} <button @click="voiceAction('accept')">Accept</button></p>
+          <button v-if="!voice.state?.group" @click="voiceAction('create')">Create private group</button>
+          <button v-else @click="voiceAction('leave')">Leave group</button>
+          <div v-for="(player, id) in voice.state?.roster || {}" :key="id">
+            <span>{{ player.name }}{{ player.group && player.group === voice.state.group ? ' (group)' : '' }}{{ voiceSpeaking(player.base) ? ' — speaking' : '' }}</span>
+            <template v-if="id !== voice.me">
+              <button @click="muteVoice(player.base)">{{ voiceOptions.muted.includes(player.base) ? 'Unmute' : 'Mute' }}</button>
+              <button v-if="voice.state.owner === voice.me && player.group !== voice.state.group" @click="voiceAction('invite', id)">Invite</button>
+              <button v-if="voice.state.owner === voice.me && player.group === voice.state.group" @click="voiceAction('kick', id)">Remove</button>
+            </template>
+          </div>
+        </div>
+      </details>
 
       <details
         v-for="(category, catIndex) in settingsSchema"
@@ -208,6 +233,41 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from "vue"
+const voice = ref({})
+const voiceOptions = ref({ enabled: false, volumes: [1, 1, 1], muted: [], input: '', output: '' })
+let voiceTimer = null
+let voiceInitialized = false
+function refreshVoice() {
+  engineLua('beamngEarth and beamngEarth.voiceState() or nil', data => {
+    if (!data) return
+    const array = value => Array.isArray(value) ? value : []
+    data.status = data.status || {}
+    for (const key of ['connected', 'speaking', 'inputs', 'outputs']) data.status[key] = array(data.status[key])
+    voice.value = data
+    if (!voiceInitialized && data.options) {
+      voiceOptions.value = { ...data.options, muted: array(data.options.muted),
+        volumes: array(data.options.volumes).length === 3 ? data.options.volumes : [1, 1, 1] }
+      voiceInitialized = true
+    }
+  })
+}
+function setVoice() {
+  const encoded = JSON.stringify(JSON.stringify(voiceOptions.value))
+  engineLua(`if beamngEarth then beamngEarth.voiceControl(${encoded}) end`)
+}
+function voiceAction(action, player = '') {
+  engineLua(`if beamngEarth then beamngEarth.voiceAction(${JSON.stringify(action)}, ${JSON.stringify(player)}) end`)
+}
+function muteVoice(base) {
+  const muted = voiceOptions.value.muted
+  const at = muted.indexOf(base)
+  if (at >= 0) muted.splice(at, 1)
+  else muted.push(base)
+  setVoice()
+}
+function voiceSpeaking(base) {
+  return (voice.value.status?.speaking || []).some(id => id >= base && id < base + 3)
+}
 import { BngButton, BngSwitch, BngSlider, BngInput, icons, ACCENTS } from "@/common/components/base"
 
 const config = ref({})
@@ -496,12 +556,15 @@ function getOptionLabel(item, val) {
 }
 
 onMounted(() => {
+  refreshVoice()
+  voiceTimer = setInterval(refreshVoice, 500)
   config.value = { ...defaultSettings }
   refresh()
   pollTimer = setInterval(refresh, 2000) // status lines while the page is open
 })
 
 onUnmounted(() => {
+  if (voiceTimer) clearInterval(voiceTimer)
   if (pollTimer) clearInterval(pollTimer)
   pollTimer = null
 })

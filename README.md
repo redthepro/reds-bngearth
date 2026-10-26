@@ -54,6 +54,10 @@ Compared with upstream 1.6.2-beta:
 - **Automated builds for every main commit.** Windows and Linux regression tests gate compilation and packaged
   startup checks. Successful pushes publish a Windows EXE, Linux AppImage, matching BeamMP server ZIP, and
   `SHA256SUMS.txt`, under a release tag containing the version, workflow run, and commit.
+- **Optional multiplayer voice.** Nearby positional, server-wide, and private-group push-to-talk channels run
+  through a self-hosted Mumble service and native CPAL/Opus audio in the companion. In-game controls include
+  devices, channel volumes, player mutes, group invitations and speaking indicators. Voice is disabled until
+  enabled for the session; it uses a separate TLS connection. See [voice setup](deploy/voice/README.md).
 
 The test suite includes an **offline 200 mph terrain-coverage scenario with delayed heightmap loading**.
 It checks streaming coverage under controlled conditions; actual loading times and frame rates still depend on

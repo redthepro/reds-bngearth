@@ -1,0 +1,24 @@
+[package]
+name = "earthvoice"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+license = "MIT"
+description = "Opt-in BeamNG.Earth voice capture, Opus and bounded spatial mixing"
+
+[lib]
+name = "earthvoice"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
+cpal = "0.16"
+opus = "=0.4.0"
+
+[target.'cfg(windows)'.dependencies]
+pyo3 = { version = "0.25", features = ["generate-import-lib"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

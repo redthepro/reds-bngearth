@@ -81,6 +81,11 @@ local function poseFoci()
 end
 local beammp = require('beamngEarth/beammp')           -- BeamMP sessions: the install recommendation
 local mpsession = require('beamngEarth/mpsession')     -- BeamMP sessions (the plugin's anchors, damage, joining)
+local voice = require('beamngEarth/voice')
+function M.voiceTalk(role, down) voice.talk(role, down) end
+function M.voiceControl(raw) voice.control(raw) end
+function M.voiceAction(action, player) voice.action(action, player) end
+function M.voiceState() return voice.uiState() end
 local mpanchor = require('beamngEarth/mpanchor')       -- BeamMP: other players' positions into our frame (PR #88)
 local seasonlook = require('beamngEarth/seasonlook')   -- the trees' leaves in the season (hello.season) -- the AI road graph for the stock traffic and AI (map.reset)
 local perflog = require('beamngEarth/perflog')         -- hitches and frame-rate drops into server.log (perflog.lua)
@@ -666,6 +671,7 @@ local function onMessage(msg)
   elseif t == 'hello' then
     landmarks.clear()
     pcall(mpsession.onServerHello)
+    pcall(voice.onServerHello)
     farfield.configureReserve(msg.streaming)
     st.sessionId = msg.sessionId
     st.refreshLater = nil       -- (a restarted server numbers its anchors from 1 again)
@@ -749,6 +755,8 @@ local function onMessage(msg)
     if msg.radius ~= nil then M.setFarRadius(msg.radius) end
   elseif t == 'load_progress' then      -- the loading line's counts (server Connection.send_progress)
     st.loadProgress = msg
+  elseif t == 'voice_status' then
+    voice.onStatus(msg)
   elseif t == 'share' then              -- our world server serving our BeamMP group (mpsession.lua, peerwork.py)
     pcall(mpsession.onShare, msg)
   elseif t == 'terrain_patch' then
@@ -1621,6 +1629,8 @@ end
 
 local function onUpdate(dtReal, dtSim)
   dtReal = dtReal or 0
+  voice.update(dtReal, st.anchor, st.player or st.cam, st.inOurLevel and beammp.inSession(),
+    not (Engine and Engine.isProgramFocused) or Engine.isProgramFocused())
   local frameMs0 = frameTimer and frameTimer:stopAndReset() or dtReal * 1000
   if not st.inOurLevel and not st.active then
     -- Other levels and the menus: nothing but the connection to the world server, kept open (on Linux the
@@ -1869,7 +1879,7 @@ end
 function M.onBeamMPPostJoin() beammp.onPostJoin(); mpsession.onPostJoin() end
 
 -- BeamMP left the server (its own hook): the other players' cars we deactivated back on.
-function M.onBeamMPServerLeave() pcall(beammp.onServerLeave); pcall(mpsession.reset) end
+function M.onBeamMPServerLeave() pcall(voice.reset); pcall(beammp.onServerLeave); pcall(mpsession.reset) end
 
 -- The UI apps (ui/modules/apps/BeamNGEarth*) say when they are on screen: hudapps.lua.
 function M.hudApp(name, on) return hudapps.setMounted(name, on) end

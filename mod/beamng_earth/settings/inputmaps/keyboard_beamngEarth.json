@@ -1,8 +1,29 @@
 {
   "displayName": "Keyboard",
-  "bindings":[
-    {"control":"ctrl shift e", "action":"beamngEarth_reportNote"},
-    {"control":"ctrl shift y", "action":"beamngEarth_reportBench"},
-    {"control":"ctrl alt w", "action":"beamngEarth_wireframe"}
+  "bindings": [
+    {
+      "control": "ctrl shift e",
+      "action": "beamngEarth_reportNote"
+    },
+    {
+      "control": "ctrl shift y",
+      "action": "beamngEarth_reportBench"
+    },
+    {
+      "control": "ctrl alt w",
+      "action": "beamngEarth_wireframe"
+    },
+    {
+      "control": "alt v",
+      "action": "beamngEarth_voice_p"
+    },
+    {
+      "control": "alt n",
+      "action": "beamngEarth_voice_s"
+    },
+    {
+      "control": "alt b",
+      "action": "beamngEarth_voice_g"
+    }
   ]
 }

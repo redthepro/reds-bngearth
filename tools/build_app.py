@@ -162,7 +162,7 @@ def pyinstaller(work, ico, onefile, ver=None, boot=None):
         cmd += ["--version-file", vf, "--manifest", mf]
     for m in mods:                                  # the server runs from launcher.py --server: all of it
         cmd += ["--hidden-import", m]
-    for lib in ("earthfast.pyd", "earthfast.abi3.so"):
+    for lib in ("earthfast.pyd", "earthfast.abi3.so", "earthvoice.pyd", "earthvoice.abi3.so"):
         p = os.path.join(server, lib)
         if os.path.isfile(p) and (lib.endswith(".pyd") == IS_WIN):
             cmd += ["--add-binary", f"{p}{SEP}."]

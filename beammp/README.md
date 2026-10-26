@@ -3,6 +3,11 @@
 This zip turns a BeamMP server into a BeamNG.Earth server: the real world, streamed around every player. Players join
 with the normal BeamMP launcher.
 
+Optional nearby, server-wide and private-group voice uses the matching companion
+and a self-hosted Mumble service. Setup files are included in `VoiceService/`;
+see `VoiceService/README.md`. Voice requires **64738 TCP + UDP** in addition to
+the game's port, and remains disabled until each player enables it in settings.
+
 Install the matching app, mod and server plugin from this fork. Compute sharing now authenticates the active
 anchor group using random session credentials relayed by the plugin. Old plugins/clients fall back to local
 generation. Credentials are not logged or included in the public position updates; only group members receive

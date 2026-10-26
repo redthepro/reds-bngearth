@@ -30,3 +30,6 @@ dist/
 native/earthfast/target/
 build/
 native/serverlist/target/
+native/earthvoice/target/
+server/earthvoice.pyd
+server/earthvoice.abi3.so

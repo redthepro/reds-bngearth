@@ -59,7 +59,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Rust kernels
+      - name: Native audio dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev cmake
+      - name: Rust kernels and native audio
         run: python tools/build_native.py
       - name: Grass patch (tools/gcpatch)
         run: sh tools/gcpatch/build.sh
@@ -102,7 +104,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Rust kernels
+      - name: CMake for bundled Opus
+        run: python -m pip install cmake
+      - name: Rust kernels and native audio
         run: python tools/build_native.py
       - name: Python packages
         run: python -m pip install pyinstaller -r server/requirements.txt

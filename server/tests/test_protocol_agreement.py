@@ -90,6 +90,8 @@ def F(types, *flags):
 
 # message type -> {field: F(types, flags)}; "type" itself is implied.
 MOD_TO_SERVER = {
+    'voice': {'action': F(str), 'data': F(dict, OPT), 'talk': F(str, OPT),
+              'pos': F(list, OPT), 'right': F(list, OPT)},
     # sessions: the session folders whose files the mod's objects still use (farfield.heldSessions; a
     # restarted server keeps an earlier run's folder named here, docs/ROADMAP.md "Robustness" 3)
     "hello": {"protocol": F(int), "format": F(int), "modVersion": F(str), "sessions": F((list, dict), OPT),
@@ -150,6 +152,8 @@ LANDMARK_ROW = {"id": F(str), "title": F(str), "lat": F(NUM), "lon": F(NUM),
                 "shape": F(str), "materials": F(str), "height_m": F(NUM),
                 "x": F(NUM), "y": F(NUM), "z": F(NUM)}
 SERVER_TO_MOD = {
+    'voice_status': {'enabled': F(bool), 'error': F(str), 'connected': F(list), 'talk': F(str),
+                     'speaking': F(list), 'inputs': F(list), 'outputs': F(list)},
     "server_list": {"servers": F(list, OPT), "error": F(str, OPT)},   # earthd.server_list (the list service)
     "geocode_result": {"id": F(int), "results": F(list), "error": F(str, OPT)},   # geocode.py (Photon)
     "route_result": {"id": F(int), "points": F(list), "dist": F(NUM), "dur": F(NUM), "error": F(str, OPT)},  # OSRM
@@ -309,7 +313,7 @@ def mod_sends():
     mpsession.lua (require('beamngEarth/net').send), and every send({...}) in terrainpatch.lua (core hands it
     net.send)."""
     out = {}
-    for names, pattern in ((("core.lua", "places.lua", "mpsession.lua", "serverlist.lua"), r"net(?:'\))?\.send\(\{"),
+    for names, pattern in ((("core.lua", "places.lua", "mpsession.lua", "serverlist.lua", "voice.lua"), r"net(?:'\))?\.send\(\{"),
                            (("terrainpatch.lua",), r"\bsend\(\{")):
         text = "\n".join((LUA / n).read_text(encoding="utf-8") for n in names)
         for m in re.finditer(pattern, text):
@@ -902,6 +906,10 @@ class ServerMessagesTest(test_server.ServerHarness):
                 "modVersion": "0.4.0"})
         until(lambda m: m["type"] == "hello")
         until(lambda m: m["type"] == "cache")           # the download cache's usage follows hello
+        c.send({'type': 'voice', 'action': 'control', 'data': {'enabled': False}})
+        voice_status = until(lambda m: m['type'] == 'voice_status')
+        self.assertFalse(voice_status['enabled'])
+        self.assertEqual(voice_status['connected'], [])
         c.send({"type": "cache", "capGb": 10})          # the page's size cap ...
         self.assertEqual(until(lambda m: m["type"] == "cache")["capBytes"], 10_000_000_000)
         c.send({"type": "cache", "clear": True})        # ... and "Clear cache"

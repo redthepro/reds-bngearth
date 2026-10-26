@@ -20,6 +20,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 FILES = ["install.py", "start.py", "launcher.py", "bmplaunch.py", "run_server.bat", "run_server.sh", "README.md", "LICENSE", "CREDITS.md",
          "VERSION", "UPDATE_REPO", "docs/QUICKSTART.md"]
+FILES += ['deploy/voice/README.md']
 TREES = ["mod/beamng_earth", "server"]
 TOOLS = ["tools/reports.py"]                # user-facing helpers from tools/ (the in-game reports -> GitHub issues)
 SKIP_DIRS = {"__pycache__", "tests", ".git", "backups", "probes", "research", ".venv", "dist"}
@@ -74,6 +75,9 @@ def beammp_zip(out_dir, ver):
         for rel in tree_files("beammp/Server"):
             z.write(os.path.join(ROOT, "beammp/Server", rel), f"Resources/Server/{rel}")
         z.write(os.path.join(ROOT, "beammp/README.md"), "BeamNG.Earth-README.md")
+        for rel in tree_files('deploy/voice'):
+            if not rel.startswith('test_') and rel != 'integration.py':
+                z.write(os.path.join(ROOT, 'deploy/voice', rel), 'VoiceService/' + rel)
     print(f"{path}: {os.path.getsize(path) / 1e6:.1f} MB")
 
 
