@@ -23,7 +23,7 @@ DropCapability=all
 PidsLimit=512
 PodmanArgs=--cpus=4 --memory=4g --memory-swap=4g
 HealthCmd=/usr/local/bin/beammp-healthcheck
-HealthInterval=30s
+HealthInterval=disable
 HealthStartPeriod=60s
 HealthRetries=3
 HealthTimeout=5s

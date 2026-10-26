@@ -1,0 +1,9 @@
+[Unit]
+Description=Check BeamMP.Earth game listeners
+After=beammp-earth.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/podman healthcheck run beammp-earth
+NoNewPrivileges=yes
+TimeoutStartSec=15s

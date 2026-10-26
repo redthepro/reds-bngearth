@@ -11,6 +11,7 @@ import math
 import os
 import sys
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
@@ -476,6 +477,25 @@ class SessionCreditsTest(test_server.ServerHarness):
     def credits_msgs(self, msgs):
         return [m for m in msgs if m["type"] == "credits"]
 
+    def far_done(self):
+        """Wait for complete coverage, allowing slow runners while tiles keep arriving.
+
+        This tests attribution, not throughput. Keep the existing 120-second stall
+        limit, but allow up to five minutes of actual tile/swap progress.
+        """
+        deadline = time.monotonic() + 300
+        stalled = time.monotonic() + 120
+        seen = []
+        while True:
+            remaining = min(deadline, stalled) - time.monotonic()
+            self.assertGreater(remaining, 0, "far field stalled or exceeded the session deadline")
+            message = self.c.recv(remaining)
+            if message["type"] == "far_done":
+                return message, seen
+            if message["type"] in ("far_tile", "far_swap", "far_remove"):
+                stalled = time.monotonic() + 120
+            seen.append(message)
+
     def test_session(self):
         c = self.c
         self.hello()
@@ -483,7 +503,7 @@ class SessionCreditsTest(test_server.ServerHarness):
         aid = a["anchorId"]
         c.send({"type": "commit_anchor", "anchorId": aid})
         self.pose(aid, 0, 0)
-        _, seen = c.until(lambda m: m["type"] == "far_done", 120)
+        _, seen = self.far_done()
         self.pose(aid, 0, 0)
         seen += c.drain(3 * self.INTERVAL)
         got = self.credits_msgs(seen)
@@ -516,7 +536,7 @@ class SessionCreditsTest(test_server.ServerHarness):
         self.assertEqual([x["type"] for x in before if x["type"] == "hello"], ["hello"])
         # the player 50 km east: only AWS under the near tiles once the far field there is in
         self.pose(aid, 50000, 0)
-        _, moving = c.until(lambda m: m["type"] == "far_done", 120)
+        _, moving = self.far_done()
         self.pose(aid, 50000, 0)
         later = self.credits_msgs(moving + c.drain(3 * self.INTERVAL))
         self.assertTrue(later)

@@ -1,0 +1,11 @@
+[Unit]
+Description=Monitor BeamMP.Earth every 30 seconds
+
+[Timer]
+OnStartupSec=1min
+OnUnitActiveSec=30s
+AccuracySec=2s
+Unit=beammp-earth-health.service
+
+[Install]
+WantedBy=timers.target
