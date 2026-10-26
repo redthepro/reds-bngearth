@@ -127,6 +127,11 @@ impl Core {
                 0.
             };
             peak = peak.max(value.abs());
+            // Mode 4 is the explicit local mic test: meter only, no encoding,
+            // network packets or playback/feedback.
+            if self.mode == 4 {
+                continue;
+            }
             while self.next <= self.index as f64 {
                 let alpha = (self.next - self.index as f64 + 1.).clamp(0., 1.) as f32;
                 self.capture
@@ -355,7 +360,7 @@ impl AudioEngine {
         })
     }
     fn set_ptt(&self, mode: u8) -> PyResult<()> {
-        if mode > 3 {
+        if mode > 4 {
             return Err(PyValueError::new_err("unknown voice channel"));
         }
         let input = self
@@ -528,6 +533,19 @@ fn earthvoice(module: &Bound<'_, PyModule>) -> PyResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_microphone_test_measures_without_encoding() {
+        let mut core = Core::new().unwrap();
+        core.mode = 4;
+        core.input(&[0.25f32; FRAME * 2], 1, RATE);
+        assert_eq!(core.mic_level, 0.25);
+        assert!(core.encoded.is_empty());
+        assert!(core.capture.is_empty());
+        core.lease = Instant::now() - Duration::from_secs(1);
+        core.input(&[0.8f32; FRAME], 1, RATE);
+        assert_eq!(core.mode, 0);
+        assert!(core.encoded.is_empty());
+    }
     #[test]
     fn silent_until_ptt_and_bounded_capture() {
         let mut core = Core::new().unwrap();

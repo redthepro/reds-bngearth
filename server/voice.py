@@ -38,7 +38,7 @@ class VoiceManager:
         if self.thread is None:
             self.thread = threading.Thread(target=self._run, name='earth-voice', daemon=True)
             self.thread.start()
-        if not isinstance(message, dict) or message.get('action') not in ('session', 'state', 'control', 'pose', 'ptt', 'reset'):
+        if not isinstance(message, dict) or message.get('action') not in ('session', 'state', 'control', 'pose', 'ptt', 'reset', 'mic_test'):
             raise ValueError('invalid voice action')
         try:
             self.commands.put_nowait(dict(message))
@@ -62,6 +62,8 @@ class VoiceManager:
         speaking = {}
         native = None
         last_status = None
+        test_at, test_until = 0., 0.
+        testing = False
 
         def status():
             nonlocal last_status
@@ -76,7 +78,7 @@ class VoiceManager:
             message = {'type': 'voice_status', 'enabled': options['enabled'], 'error': error,
                          'connected': [r for r, c in clients.items() if c.ready],
                          'talk': mode, 'speaking': [uid for uid, at in speaking.items() if time.monotonic()-at < .3],
-                         'inputs': inputs, 'outputs': outputs, 'microphone': microphone}
+                         'inputs': inputs, 'outputs': outputs, 'microphone': microphone, 'testing': testing}
             if message != last_status:
                 self.notify(message)
                 last_status = message
@@ -158,8 +160,17 @@ class VoiceManager:
                             held = msg.get('talk', '')
                             if held not in ROLES: held = ''
                             held_at = now
+                        elif action == 'mic_test':
+                            if msg.get('data', {}).get('active') is True and options['enabled']:
+                                if now - test_at >= .4:
+                                    test_until = now + 10
+                                test_at = now
+                            else:
+                                test_at, test_until = 0., 0.
                         elif action == 'reset':
                             held, session, state = '', {}, {}
+                            test_at, test_until = 0., 0.
+                    testing = options['enabled'] and bool(session) and now - test_at < .4 and now < test_until
                     enabled = options['enabled'] and bool(session)
                     if not enabled:
                         for c in clients.values(): c.close()
@@ -196,10 +207,14 @@ class VoiceManager:
                         if mode and desired != mode and mode in clients:
                             clients[mode].send_audio(b'', end=True)
                         mode = desired
-                        engine.set_ptt(ROLES.index(mode) + 1 if mode else 0)
+                        if testing:
+                            mode = ''
+                        engine.set_ptt(4 if testing else ROLES.index(mode) + 1 if mode else 0)
                         if 'p' in clients:
                             clients['p'].set_targets(set((state.get('nearby', []) or [])[:100]))
                         for encoded_mode, packet in engine.take_encoded():
+                            if encoded_mode not in (1, 2, 3) or testing:
+                                continue
                             role = ROLES[encoded_mode - 1]
                             if role == mode and role in clients:
                                 clients[role].send_audio(packet, listener if role == 'p' else None)

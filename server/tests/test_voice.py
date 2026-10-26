@@ -5,12 +5,61 @@ import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import voice
 
 
 class VoiceTest(unittest.TestCase):
+    def test_global_membership_and_private_mic_test_expire_without_broadcast(self):
+        engines, clients, notices = [], [], []
+
+        class Engine:
+            def __init__(self, *args): self.mode = 0; engines.append(self)
+            def close(self): self.mode = 0
+            def set_ptt(self, mode): self.mode = mode
+            def take_encoded(self): return [(4, b'private-meter-only')] if self.mode == 4 else []
+            def microphone_level(self): return (.2, True) if self.mode == 4 else (0., False)
+            def last_error(self): return ''
+            def remove(self, uid): pass
+
+        class Client:
+            def __init__(self, *args): self.role = args[5]; self.ready = False; self.sent = []; clients.append(self)
+            def connect(self): self.ready = True
+            def close(self): self.ready = False
+            def poll(self): pass
+            def set_targets(self, *args): pass
+            def send_audio(self, packet, *args, **kw): self.sent.append(packet)
+
+        manager = voice.VoiceManager(notices.append)
+        def wait_for(condition):
+            until = time.monotonic() + 3
+            while not condition() and time.monotonic() < until: time.sleep(.01)
+            self.assertTrue(condition())
+        native = SimpleNamespace(AudioEngine=Engine, devices=lambda: ([], []))
+        with patch.dict(sys.modules, {'earthvoice': native}), patch.object(voice, 'MumbleClient', Client):
+            try:
+                manager.handle({'action': 'control', 'data': {'enabled': True}})
+                manager.handle({'action': 'session', 'data': {'base': 3000, 'host': 'test', 'port': 1,
+                                                            'fingerprint': 'test', 'token': 'private'}})
+                wait_for(lambda: bool(clients))
+                self.assertEqual([c.role for c in clients], ['p'])
+                manager.handle({'action': 'control', 'data': {'enabled': True, 'server': True}})
+                wait_for(lambda: any(c.role == 's' and c.ready for c in clients))
+                manager.handle({'action': 'control', 'data': {'enabled': True, 'server': False}})
+                wait_for(lambda: all(not c.ready for c in clients if c.role == 's'))
+                manager.handle({'action': 'mic_test', 'data': {'active': True}})
+                wait_for(lambda: engines[-1].mode == 4)
+                wait_for(lambda: any(n['microphone']['detected'] and n['testing'] for n in notices))
+                # With no refresh/release command, the short local lease still stops capture.
+                wait_for(lambda: engines[-1].mode == 0)
+                self.assertFalse(any(c.sent for c in clients))
+            finally:
+                manager.close()
+                if manager.thread: manager.thread.join(3)
+        self.assertFalse(manager.thread.is_alive())
+
     def test_spatial_geographic_distance_and_pan(self):
         # ECEF differences stay stable when the game moves its local origin.
         pos = (1100000., -4800000., 4000000.)

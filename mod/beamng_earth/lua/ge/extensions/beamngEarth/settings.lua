@@ -512,11 +512,16 @@ function M.uiMapState()
     mapPort = net.isConnected() and st and st.mapPort or nil,
     player = (pl and pl.lat) and { lat = pl.lat, lon = pl.lon, heading = playerHeading(), speed = pl.speed } or nil,
     others = otherPlayers(),
+    social = require('beamngEarth/mpsession').socialState(),
     places = ps.places, recent = ps.recent, cannotGo = ps.cannotGo,
     attribution = core and core.attribution and core.attribution() or '',
     creditsByArea = core and core.creditsByArea and core.creditsByArea() or nil,
     gps = require('beamngEarth/gps').status(),
   }
+end
+
+function M.uiMapVisibility(on)
+  return {ok=require('beamngEarth/mpsession').setMapVisible(on)}
 end
 
 -- Teleport from the map (the page asked "Teleport here?" first); recorded in the recent places.

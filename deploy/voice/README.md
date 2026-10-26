@@ -5,15 +5,39 @@ the in-game BeamNG.Earth settings. Capture runs only while a granted push-to-tal
 key is held; losing focus, leaving the session, or missing the short control
 lease stops transmission. It is disabled each new game session.
 
+Open **Pause → Mods → Earth Social & Voice** (also available in Earth settings).
 Default keys (rebind in Controls): Alt+V nearby (80 m), Alt+N global/server, Alt+B group.
 Nearby and group voice become available after the session opt-in; global/server voice is a separate setting and
 stays off until that player joins it. The settings page includes devices, three volume controls, player mutes,
 speaking indicators, a live push-to-talk microphone level/verification state, group creation, owner
 invitations/removal, accepting and leaving. The level is diagnostic only: it never exposes or retains raw PCM.
+**Hold to test mic** uses native meter-only capture, without Opus encoding, transmission or playback. Release,
+unmount, blur and a ten-second limit end the test; the worker/native short leases also fail closed. The driving
+status HUD shows microphone activity, the active channel and names of players currently being heard.
 Groups support 16 members; invitations expire after 30 seconds. Concurrent talker
 limits are 4 server, 6 group, and 8 per proximity neighborhood.
 
 ## Hosting
+
+For an unpacked server release, the preferred entry point is `install_server.py --server-dir /path/to/BeamMP
+--enable-voice --public-host YOUR_PUBLIC_HOST --start-voice`. It installs resources and calls this directory’s
+`install.py`. See `../BeamNG.Earth-README.md` in the release, or [the server guide](../../beammp/README.md) in Git.
+The standalone voice installer is also available:
+
+```sh
+python3 VoiceService/install.py --game-dir /path/to/BeamMP --public-host YOUR_PUBLIC_HOST --dry-run
+python3 VoiceService/install.py --game-dir /path/to/BeamMP --public-host YOUR_PUBLIC_HOST --start
+```
+
+Use a non-root Linux user with Python 3.11+, OpenSSL, Podman/Quadlet, subordinate UID/GID ranges and a user systemd
+session. No pip packages are needed on the host. The generated unit maps the host user to the image’s UID/GID,
+so the host account need not be UID 1000. `--registry-dir` selects a separate shared mount for containerized games;
+`--data-dir` selects persistent private voice data. `--port` selects a published port (default 64738). The installer
+prints the forwarding and mount requirements and leaves router, firewall and game config under operator control.
+It preserves existing certificates/secrets; back these up privately before migrating a host.
+
+Manual setup remains available below; the checked-in Quadlet is an Olympus example, not a portable account/path
+template. Use the installer-generated unit on other hosts.
 
 The optional BeamMP plugin activates when `voice/endpoint.json` exists in the
 server working directory. This directory **must remain outside Resources**.
@@ -30,7 +54,7 @@ the service to 2 CPUs, 2 GiB RAM and 128 processes; 300 voice connections cover
 100-player load-test result.
 
 1. Copy this directory to the host and build with `podman build -t
-   localhost/beamng-earth-voice:1.8.1 <directory>`.
+   localhost/beamng-earth-voice:1.8.2 <directory>`.
 2. Run `python3 initialize.py --data ~/beamng-earth-voice-data --game
    ~/beamng-earth-voice-registry --host YOUR_PUBLIC_IP_OR_DNS`. It generates
    a stable certificate and private secrets without printing credentials.

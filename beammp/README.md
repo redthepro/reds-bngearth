@@ -10,6 +10,73 @@ the game's port, and remains disabled until each player enables it in settings.
 Nearby and group voice are then available; server-wide voice additionally requires
 that player to explicitly join the global channel.
 
+## Installer (1.8.2 and newer)
+
+1. Install the official [BeamMP server](https://docs.beammp.com/server/create-a-server/), run it once to create
+   `ServerConfig.toml`, then stop it. Set your own AuthKey, map `/levels/beamng_earth/info.json`, name and player
+   limit in that file. The Earth installer preserves this configuration.
+2. Download the matching `BeamNG.Earth-BeamMP-Server-VERSION.zip` and extract it into a **separate staging folder**.
+   Keep `install_server.py`, `VERSION`, `Resources/` and `VoiceService/` together. Python 3.10+ is required for game
+   resources; Linux voice setup needs Python 3.11+, OpenSSL, rootless Podman with Quadlet, a user systemd session,
+   and configured subordinate user/group IDs. The voice image supplies its own runtime dependencies.
+3. From that staging folder, preview the update, then install it:
+
+   ```sh
+   python3 install_server.py --server-dir /path/to/BeamMP --dry-run
+   python3 install_server.py --server-dir /path/to/BeamMP
+   ```
+
+   Windows PowerShell: `py -3 .\install_server.py --server-dir C:\BeamMP`. Voice hosting can run separately on a
+   Linux host; game resource installation works on Windows and Linux. The installer refuses an update if the
+   configured game port accepts a local connection. Stop the process/container yourself first; this check cannot
+   detect a server bound exclusively to another address or a container with a different published port.
+4. To install and start voice on a **bare-host Linux BeamMP server**, use the same Linux user as the game:
+
+   ```sh
+   python3 install_server.py --server-dir /path/to/BeamMP \
+     --enable-voice --public-host voice.example.org --start-voice
+   ```
+
+   Replace the hostname with a working public DNS record or IP; the script does not create DNS/forwarding rules.
+   It builds the pinned voice container, creates a stable TLS certificate and private registry, writes a user
+   Quadlet, reloads the user manager, and starts the voice service. It preserves existing TLS/authenticator secrets.
+   Leave off `--start-voice` to install without starting it. Add `--dry-run` to check prerequisites and paths only.
+   For boot startup, the host administrator must enable lingering for this user (`loginctl enable-linger USER`).
+5. For **containerized BeamMP**, use a dedicated shared registry outside its private data volume:
+
+   ```sh
+   python3 install_server.py --server-dir /path/to/BeamMP/data \
+     --enable-voice --public-host voice.example.org \
+     --registry-dir /home/USER/earth-voice-registry --start-voice
+   ```
+
+   Add the game container mount `/home/USER/earth-voice-registry:/server/voice:z`. The generated voice service mounts
+   the same directory at `/game:z`. Share the label with `:z` on both; keep this directory outside any parent
+   `:Z` volume so a game restart cannot relabel it. Run both services under the same host user. The installer prints
+   the required mount, but does not modify an existing game container. For Windows game hosting, expose the private
+   registry to a trusted Linux voice host using an operator-managed private filesystem; do not expose it publicly.
+6. Forward the game port (**30814 TCP/UDP** by default) and voice port (**64738 TCP/UDP**) to the relevant host(s),
+   and allow them in the host firewall. Never forward private controller ports 6502/6503.
+7. Start BeamMP. Its log should include `plugin loaded` and, when voice is configured, `optional voice broker
+   loaded`. Check voice with `podman ps --filter name=beamng-earth-voice` and `podman logs beamng-earth-voice`;
+   look for `Voice authenticator ready`. The user service is `beamng-earth-voice.service`.
+8. Two players run the matching companion EXE/AppImage, reconnect, and open **Pause → Mods → Earth Social & Voice**.
+   Enable voice, hold the mic-test button to verify local capture, then test Alt+V within 80 m. Each player must
+   explicitly **Join global** for Alt+N; create/invite/accept a private group for Alt+B. Test map visibility with one
+   player opening **Map → Players → Show me to other players**. Turning it off removes that marker.
+
+Updates back up replaced Earth files under `SERVER/backups/earth-TIMESTAMP/`, outside downloaded resources. A copy
+failure restores files already replaced. For manual rollback, stop BeamMP and restore those resource files; leave
+`ServerConfig.toml`, other mods and the private voice registry alone. Back up the voice data directory separately
+(certificate, key, database and authenticator secret). Treat that backup as private. An image/configuration failure
+can be inspected before restarting the game; the installer does not silently restart it or change the AuthKey.
+
+The main EXE/AppImage already installs the social UI, map controls and voice client. There is no extra player mod
+to distribute. Voice, global membership, and map-marker sharing are off by default each new multiplayer session.
+Map visibility does not disable vehicle/anchor networking and is not a way to hide a position from the server.
+
+## Manual installation
+
 Install the matching app, mod and server plugin from this fork. Compute sharing now authenticates the active
 anchor group using random session credentials relayed by the plugin. Old plugins/clients fall back to local
 generation. Credentials are not logged or included in the public position updates; only group members receive
@@ -58,7 +125,7 @@ data and little CPU: the world is built on each player's computer.
 
 ## Players
 
-- **Every player needs the BeamNG.Earth app** (https://github.com/redthepro/bngearth/releases) running, the same
+- **Every player needs the BeamNG.Earth app** (https://github.com/redthepro/reds-bngearth/releases) running, the same
   version as the server's. Start the BeamNG.Earth app and the BeamMP launcher in either order (the app starts the game,
   or just its world server if the game is already running), then join. Without the app, a window asks to install it:
   the world can't load without it.

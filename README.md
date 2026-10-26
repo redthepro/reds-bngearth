@@ -2,7 +2,7 @@
 
 This is [redthepro/reds-bngearth](https://github.com/redthepro/reds-bngearth), a fork of
 [TecnaGamer's BeamNG.Earth](https://github.com/TecnaGamer/BeamNG.Earth) focused on terrain loading,
-driving quality, and reliability. **Version 1.8.1 includes upstream 1.6.2-beta plus the changes below.**
+driving quality, and reliability. **Version 1.8.2 includes upstream 1.6.2-beta plus the changes below.**
 The original streamed world, map data integration, and BeamMP foundation come from TecnaGamer and the
 upstream contributors.
 
@@ -12,19 +12,22 @@ real curvature of the Earth.
 
 [Download this fork](https://github.com/redthepro/reds-bngearth/releases) ·
 [Report a fork issue](https://github.com/redthepro/reds-bngearth/issues) ·
-[Installation](#install-and-play) · [Voice chat](#multiplayer-voice-in-181) ·
+[Installation](#install-and-play) · [Social & voice](#social-and-voice-in-182) ·
 [Changelog](CHANGELOG.md) · [Build status](https://github.com/redthepro/reds-bngearth/actions/workflows/release.yml)
 
-## Multiplayer voice in 1.8.1
+## Social and voice in 1.8.2
 
 This release adds **nearby positional voice, a server-wide channel, and private groups** to the fork's
 terrain and driving improvements. Audio capture, Opus encoding, playback, and spatial mixing run in native
 code in the companion. The downloadable Windows EXE and Linux AppImage include the voice client.
 
-Join a BeamMP server with Earth voice enabled, open **BeamNG.Earth settings**, and enable voice for that
-session. Nearby and private-group voice are then available; server-wide voice has its own **Join global/server
-voice chat** switch and remains off until the player chooses it. Choose your microphone/output and adjust each
-channel's volume there. Hold a key to talk:
+Join a BeamNG.Earth BeamMP server, then open **Pause → Mods → Earth Social & Voice**. The panel has a searchable
+server player list, nearby/global/group channel cards, microphone/output selection, per-channel volume, player
+mutes, and group invitations. The same panel is available inside Earth settings. It ships inside the main
+EXE/AppImage’s mod and the matching BeamMP client ZIP; no extra client mod or Mumble app is needed.
+
+Enable voice for the session to listen to nearby players and your private group. Use **Join global** to listen
+or talk on the server-wide channel; global is off until you join it. Hold a key to talk:
 
 | Channel | Default key | Who hears you |
 | --- | --- | --- |
@@ -32,16 +35,27 @@ channel's volume there. Hold a key to talk:
 | Global/server | **Alt+N** | Players connected to the server's voice service, after explicitly joining it |
 | Group | **Alt+B** | Members of your private group |
 
-Keys can be rebound in Controls. The settings page includes player mutes and speaking indicators. While holding a
-push-to-talk key it also shows a live microphone level: **receiving audio** confirms the selected microphone's
-capture callback is seeing sound; **open — speak to verify** means it is live but has not crossed the indicator
-threshold. No microphone capture occurs while push-to-talk is idle.
+Keys can be rebound in Controls. **Hold to test mic** runs a local meter test, with no encoded or transmitted audio.
+Release, close the panel, switch focus, or wait 10 seconds to stop it. **Audio detected · microphone working**
+confirms capture from the selected input; another player hearing you confirms the full connection. Outside this
+explicit test or a granted push-to-talk press, microphone capture is idle. The driving HUD shows microphone use,
+your transmitting channel, and players you are hearing.
 Create a private group there, invite players, accept invitations, or leave; the owner can remove members.
 Groups support 16 members and invitations expire after 30 seconds. Voice is opt-in again after leaving
 multiplayer; releasing the key or losing game focus stops transmission.
 
+**Map visibility:** open the world map’s **Players** menu and choose **Show me to other players**, or use the
+matching switch in Social & Voice. It is off by default each session and works independently of voice. Hidden
+players remain in the player list but have no map marker, are not used as automatic meeting points, and do not
+supply the public server list’s location. This is map visibility, not anonymous play: BeamMP/server vehicle and
+anchor synchronization still convey position for gameplay. Older servers do not expose the switch.
+
 **Hosting:** the matching BeamMP server ZIP includes `VoiceService/` with the self-hosted Mumble service
-and setup instructions. Players use the companion; a separate Mumble app is not required.
+and setup instructions plus **install_server.py**. From an unpacked server release run
+`python install_server.py --server-dir /path/to/stopped/BeamMP` (`py -3` on Windows). The installer backs up replaced
+Earth resources and preserves the operator’s config/AuthKey and other mods. Optional Linux voice installation:
+`python3 install_server.py --server-dir /path/to/BeamMP --enable-voice --public-host YOUR_PUBLIC_IP_OR_DNS --start-voice`.
+See the [server guide](beammp/README.md) for prerequisites, container registry mounts, verification and rollback.
 
 | Service | Default host ports |
 | --- | --- |
@@ -98,6 +112,9 @@ Compared with upstream 1.6.2-beta:
   through a self-hosted Mumble service and native CPAL/Opus audio in the companion. In-game controls include
   devices, channel volumes, player mutes, group invitations and speaking indicators. Voice is disabled until
   enabled for the session; it uses a separate TLS connection. See [voice setup](deploy/voice/README.md).
+- **In-game social controls and opt-in map markers.** A dedicated Mods panel brings together channels, mic testing,
+  the player list, mutes and private-group invitations. Each player chooses whether to share their map marker.
+  The server release bundles an installer and operator guide for game resources and the optional voice service.
 
 The test suite includes an **offline 200 mph terrain-coverage scenario with delayed heightmap loading**.
 It checks streaming coverage under controlled conditions; actual loading times and frame rates still depend on
@@ -297,7 +314,7 @@ Player downloads: `python3 tools/build_app.py` builds this system's AppImage / .
 docstring; for the .exe run `tools/build_bootloader.py` first: a bootloader built from source, fewer antivirus
 false positives). Every push to `main` runs the Windows/Linux regression suites, compiles the Rust kernels,
 builds and smoke-tests both executables, and publishes a GitHub release with the matching BeamMP package and
-`SHA256SUMS.txt`. A version bump publishes its named release, such as **`v1.8.1`**. Other commits use
+`SHA256SUMS.txt`. A version bump publishes its named release, such as **`v1.8.2`**. Other commits use
 `v<VERSION>-build.<workflow-run-number>.g<commit-sha>`. The selected version is embedded in the downloads.
 Failed tests or builds prevent publication. Separate pushes keep their own builds; an older build finishing late
 cannot replace the current main build as Latest. Preview/alpha/rc versions remain prereleases.

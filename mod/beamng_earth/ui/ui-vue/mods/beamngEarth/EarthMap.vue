@@ -77,7 +77,7 @@
         <div class="cross"></div>
       </div>
       <!-- the other players (a BeamMP session) -->
-      <div v-for="o in otherMarkers" :key="'o' + o.name" class="marker other" :style="{ left: o.sx + 'px', top: o.sy + 'px' }">
+      <div v-for="o in otherMarkers" :key="'o' + (o.id || o.name)" class="marker other" :style="{ left: o.sx + 'px', top: o.sy + 'px' }">
         <div class="arrow" :style="{ transform: 'rotate(' + (o.h || 0) + 'deg)' }" :class="{ noheading: o.h == null }"></div>
         <span class="marker-label">{{ o.name }}</span>
       </div>
@@ -118,6 +118,17 @@
       <button class="map-btn" @click="zoomBy(1)" title="Zoom in">+</button>
       <button class="map-btn" @click="zoomBy(-1)" title="Zoom out">-</button>
       <button class="map-btn" :class="{ on: follow }" @click="centreOnMe" title="Centre on the car and follow it">Me</button>
+      <div v-if="state.social?.supported" class="layers-wrap">
+        <button class="map-btn" :class="{ on: visibilityPanel }" @click="visibilityPanel = !visibilityPanel">Players</button>
+        <div v-if="visibilityPanel" class="layers-panel" @mousedown.stop @wheel.stop @dblclick.stop>
+          <div class="panel-sub">Your map visibility</div>
+          <label class="layer-opt"><input type="checkbox" :checked="state.social.mapVisible" @change="setMapVisibility($event.target.checked)" /> Show me to other players</label>
+          <p class="layer-hint">Off by default each session. Hides your map marker; vehicle and server position sync still run.</p>
+          <label class="layer-opt"><input type="checkbox" v-model="showPlayers" /> Show shared player markers</label>
+          <div class="layer-hint">{{ otherMarkers.length }} visible in this view</div>
+          <div v-if="visibilityError" role="alert">{{ visibilityError }}</div>
+        </div>
+      </div>
       <div class="layers-wrap">
         <button class="map-btn" :class="{ on: layersPanel }" @click="layersPanel = !layersPanel" title="Base map and overlays">Layers</button>
         <div v-if="layersPanel" class="layers-panel" @mousedown.stop @wheel.stop @dblclick.stop>
@@ -263,6 +274,13 @@ const w = ref(1280), h = ref(720)
 const view = ref({ lat: 20, lon: 0, z: 3 })
 const follow = ref(true)              // the view follows the car until the user pans
 const state = ref({ places: [], recent: [] })
+const visibilityPanel = ref(false), showPlayers = ref(true), visibilityError = ref('')
+function setMapVisibility(on) {
+  engineLua(`beamngEarth_settings and beamngEarth_settings.uiMapVisibility(${on ? 'true' : 'false'}) or nil`, result => {
+    visibilityError.value = result?.ok ? '' : 'Server visibility controls are unavailable. Rejoin an updated server.'
+    poll()
+  })
+}
 const target = ref(null)              // { lat, lon, name } waiting for "Teleport here?"
 const teleportMsg = ref("")
 const busy = ref(false)
@@ -413,7 +431,7 @@ const placeMarkers = computed(() =>
     .filter(p => onScreen({ x: p.sx, y: p.sy })))
 
 const otherMarkers = computed(() =>
-  (state.value.others || []).map(o => { const s = screen(o.lat, o.lon); return { ...o, sx: s.x, sy: s.y } })
+  (showPlayers.value && Array.isArray(state.value.others) ? state.value.others : []).map(o => { const s = screen(o.lat, o.lon); return { ...o, sx: s.x, sy: s.y } })
     .filter(o => onScreen({ x: o.sx, y: o.sy })))
 
 const playerScreen = computed(() => {
@@ -1049,6 +1067,7 @@ function close() {
 }
 
 function onEscape() {
+  if (visibilityPanel.value) { visibilityPanel.value = false; return }
   if (layersPanel.value) { layersPanel.value = false; return }
   if (target.value) { target.value = null; return }
   if (results.value.length) { results.value = []; return }

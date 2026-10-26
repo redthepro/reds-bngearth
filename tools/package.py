@@ -75,6 +75,8 @@ def beammp_zip(out_dir, ver):
         for rel in tree_files("beammp/Server"):
             z.write(os.path.join(ROOT, "beammp/Server", rel), f"Resources/Server/{rel}")
         z.write(os.path.join(ROOT, "beammp/README.md"), "BeamNG.Earth-README.md")
+        z.write(os.path.join(ROOT, 'beammp/install_server.py'), 'install_server.py')
+        z.write(os.path.join(ROOT, 'VERSION'), 'VERSION')
         for rel in tree_files('deploy/voice'):
             if not rel.startswith('test_') and rel != 'integration.py':
                 z.write(os.path.join(ROOT, 'deploy/voice', rel), 'VoiceService/' + rel)

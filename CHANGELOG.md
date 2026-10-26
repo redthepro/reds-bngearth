@@ -2,6 +2,21 @@
 
 What changed in each release of BeamNG.Earth, newest first.
 
+## 1.8.2 (2026-10-26)
+
+- Added a dedicated Mods → Earth Social & Voice control panel, with nearby/global/private-group channel cards,
+  connection/transmission state, devices, channel volumes, player search/mutes, group membership and invitations.
+  The same component replaces the older settings controls and keeps Lua session state authoritative.
+- Added an explicit local-only microphone test with a level meter, capture verification, release/focus-loss
+  cancellation, a short worker lease and a ten-second limit. The driving HUD shows live mic/channel/speaker state.
+- Added per-session opt-in map markers from the map’s Players menu or social panel. Hidden players remain in the
+  roster and vehicle sync, but have no map marker and are excluded from meeting/public-location selection.
+- Added a standard-library BeamMP resource installer with dry-run, verified copying, backups and rollback on copy
+  failure. Optional Linux rootless Podman voice setup generates private configuration and a user-specific Quadlet;
+  the server ZIP includes the installer, voice service and operator instructions.
+- Added regression coverage for social state, visibility, local-only capture, installer boundaries and Vue template
+  compilation/rendering on Windows and Linux.
+
 ## 1.8.1 (2026-10-26)
 
 - Kept voice opt-in intact when the game briefly has no player/terrain anchor while a menu closes or the world

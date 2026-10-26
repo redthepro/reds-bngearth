@@ -44,11 +44,13 @@ function BNGE_voicePose(pid, raw)
   end
   if p.poseAt and V.time - p.poseAt < 0.075 then return end
   p.poseAt, p.seen = V.time, V.time
+  p.enabled, p.global = d.enabled ~= false, d.global ~= false -- legacy 1.8.0 clients omit these
   local pos = d.pos
   if type(pos) == 'table' and finite(pos[1]) and finite(pos[2]) and finite(pos[3])
       and math.abs(pos[1]) <= 7e6 and math.abs(pos[2]) <= 7e6 and math.abs(pos[3]) <= 7e6 then p.pos = pos end
   local want = d.talk
   if want ~= 'p' and want ~= 's' and want ~= 'g' then want = '' end
+  if not p.enabled or (want == 's' and not p.global) then want = '' end
   if want == 'g' and p.group == '' then want = '' end
   if want ~= p.want then p.requested = V.time end
   p.want = want
@@ -56,7 +58,8 @@ end
 function BNGE_voiceAction(pid, raw)
   pid = tostring(pid)
   local p = V.players[pid]; if not p or type(raw) ~= 'string' or #raw > 1024 then return end
-  if p.actionAt and V.time - p.actionAt < 0.5 then return end
+  local function result(ok, text) send(tonumber(pid),'bngeVoiceActionResult',{ok=ok,text=text}) end
+  if p.actionAt and V.time - p.actionAt < 0.5 then result(false,'Please wait before the next group action.'); return end
   p.actionAt = V.time
   local ok, d = pcall(Util.JsonDecode, raw); if not ok or type(d) ~= 'table' then return end
   local target = tostring(d.player or '')
@@ -64,23 +67,28 @@ function BNGE_voiceAction(pid, raw)
     V.serial = V.serial + 1
     p.group = epoch .. ':' .. V.serial
     V.groups[p.group] = { owner = pid, members = { [pid] = true } }
+    result(true,'Private group created. Invite a player from the list.')
   elseif d.action == 'invite' then
     local g = V.groups[p.group]
     if g and g.owner == pid and V.players[target] and V.players[target].group == '' then
       V.invites[target] = { group = p.group, expires = V.time + 30, from = pid }
-    end
+      result(true,'Invitation sent. It expires in 30 seconds.')
+    else result(false,'Only the owner can invite a player who is not already in a group.') end
   elseif d.action == 'accept' and p.group == '' then
     local invite = V.invites[pid]; local g = invite and V.groups[invite.group]
     if g and invite.expires > V.time then
       local n = 0; for _ in pairs(g.members) do n = n+1 end
-      if n < 16 then p.group = invite.group; g.members[pid] = true end
-    end
+      if n < 16 then p.group = invite.group; g.members[pid] = true; result(true,'Joined private group.')
+      else result(false,'This group already has 16 members.') end
+    else result(false,'That invitation has expired or the group has closed.') end
     V.invites[pid] = nil
-  elseif d.action == 'leave' then leave(pid)
+  elseif d.action == 'decline' then V.invites[pid] = nil; result(true,'Invitation declined.')
+  elseif d.action == 'leave' then leave(pid); result(true,'Left private group.')
   elseif d.action == 'kick' then
     local g = V.groups[p.group]
-    if g and g.owner == pid and target ~= pid and g.members[target] then leave(target) end
-  end
+    if g and g.owner == pid and target ~= pid and g.members[target] then leave(target); result(true,'Player removed from group.')
+    else result(false,'Only the group owner can remove another member.') end
+  else result(false,'That group action is unavailable.') end
 end
 function BNGE_voiceTick()
   V.time = V.time + 0.1
@@ -118,7 +126,8 @@ function BNGE_voiceTick()
   local roster = {}
   for pid, c in pairs(creds.players) do
     local p = V.players[pid]
-    if p and c.epoch == p.epoch then roster[pid] = { name=p.name, base=c.base, group=p.group } end
+    if p and c.epoch == p.epoch then roster[pid] = { name=p.name, base=c.base, group=p.group,
+      enabled=p.enabled, global=p.global } end
   end
   local rosterSig = Util.JsonEncode(roster)
   for pid, p in pairs(V.players) do

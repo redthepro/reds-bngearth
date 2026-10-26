@@ -28,34 +28,10 @@
 
     <!-- Main Scrollable List -->
     <div class="options-list-scroll">
-      <details class="category-block">
-        <summary class="category-title">Multiplayer voice</summary>
+      <details class="category-block" @toggle="socialOpen = $event.target.open">
+        <summary class="category-title">Social &amp; Voice</summary>
         <div class="category-items">
-          <label><input type="checkbox" v-model="voiceOptions.enabled" @change="setVoice" /> Enable voice for this session</label>
-          <label><input type="checkbox" v-model="voiceOptions.server" :disabled="!voiceOptions.enabled" @change="setVoice" /> Join global/server voice chat</label>
-          <p>Nearby and private-group chat are available when voice is enabled. Global/server chat is off by default and requires joining it above. Hold Alt+V for nearby players (80 m), Alt+N for global chat, or Alt+B for your group. Rebind in Controls.</p>
-          <p>{{ voice.status?.error || (voice.available ? 'Connected channels: ' + (voice.status?.connected || []).join(', ') : 'Join a server with Earth voice enabled.') }}</p>
-          <p v-if="voice.status?.talk">Transmitting: {{ voice.status.talk === 'p' ? 'Nearby' : voice.status.talk === 's' ? 'Server' : 'Group' }}</p>
-          <div class="voice-mic-status" :class="{ active: voice.status?.microphone?.active, detected: voice.status?.microphone?.detected }">
-            <span>Microphone {{ voice.status?.microphone?.active ? (voice.status?.microphone?.detected ? 'receiving audio' : 'open — speak to verify') : 'idle — hold a push-to-talk key to test' }}</span>
-            <meter min="0" max="1" :value="voice.status?.microphone?.level || 0"></meter>
-          </div>
-          <label>Microphone <select v-model="voiceOptions.input" @change="setVoice"><option value="">System default</option><option v-for="name in voice.status?.inputs || []" :key="name">{{ name }}</option></select></label>
-          <label>Output <select v-model="voiceOptions.output" @change="setVoice"><option value="">System default</option><option v-for="name in voice.status?.outputs || []" :key="name">{{ name }}</option></select></label>
-          <div v-for="(label, i) in ['Nearby', 'Server', 'Group']" :key="label">
-            <label>{{ label }} volume <input type="range" min="0" max="2" step="0.05" v-model.number="voiceOptions.volumes[i]" @change="setVoice" /></label>
-          </div>
-          <p v-if="voice.state?.invite">Group invite from {{ voice.state.roster?.[voice.state.invite]?.name || voice.state.invite }} <button @click="voiceAction('accept')">Accept</button></p>
-          <button v-if="!voice.state?.group" @click="voiceAction('create')">Create private group</button>
-          <button v-else @click="voiceAction('leave')">Leave group</button>
-          <div v-for="(player, id) in voice.state?.roster || {}" :key="id">
-            <span>{{ player.name }}{{ player.group && player.group === voice.state.group ? ' (group)' : '' }}{{ voiceSpeaking(player.base) ? ' — speaking' : '' }}</span>
-            <template v-if="id !== voice.me">
-              <button @click="muteVoice(player.base)">{{ voiceOptions.muted.includes(player.base) ? 'Unmute' : 'Mute' }}</button>
-              <button v-if="voice.state.owner === voice.me && player.group !== voice.state.group" @click="voiceAction('invite', id)">Invite</button>
-              <button v-if="voice.state.owner === voice.me && player.group === voice.state.group" @click="voiceAction('kick', id)">Remove</button>
-            </template>
-          </div>
+          <EarthSocial v-if="socialOpen" compact />
         </div>
       </details>
 
@@ -238,45 +214,8 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from "vue"
-const voice = ref({})
-const voiceOptions = ref({ enabled: false, server: false, volumes: [1, 1, 1], muted: [], input: '', output: '' })
-let voiceTimer = null
-let voiceInitialized = false
-let voiceWriteAt = 0
-function refreshVoice() {
-  engineLua('beamngEarth and beamngEarth.voiceState() or nil', data => {
-    if (!data) return
-    const array = value => Array.isArray(value) ? value : []
-    data.status = data.status || {}
-    for (const key of ['connected', 'speaking', 'inputs', 'outputs']) data.status[key] = array(data.status[key])
-    data.status.microphone = data.status.microphone || { active: false, level: 0, detected: false }
-    voice.value = data
-    if (!voiceInitialized && data.options) {
-      voiceOptions.value = { ...data.options, server: data.options.server === true, muted: array(data.options.muted),
-        volumes: array(data.options.volumes).length === 3 ? data.options.volumes : [1, 1, 1] }
-      voiceInitialized = true
-    }
-    if (data.options && Date.now() - voiceWriteAt > 1000) voiceOptions.value.enabled = data.options.enabled === true
-  })
-}
-function setVoice() {
-  voiceWriteAt = Date.now()
-  const encoded = JSON.stringify(JSON.stringify(voiceOptions.value))
-  engineLua(`if beamngEarth then beamngEarth.voiceControl(${encoded}) end`)
-}
-function voiceAction(action, player = '') {
-  engineLua(`if beamngEarth then beamngEarth.voiceAction(${JSON.stringify(action)}, ${JSON.stringify(player)}) end`)
-}
-function muteVoice(base) {
-  const muted = voiceOptions.value.muted
-  const at = muted.indexOf(base)
-  if (at >= 0) muted.splice(at, 1)
-  else muted.push(base)
-  setVoice()
-}
-function voiceSpeaking(base) {
-  return (voice.value.status?.speaking || []).some(id => id >= base && id < base + 3)
-}
+import EarthSocial from './EarthSocial.vue'
+const socialOpen = ref(false)
 import { BngButton, BngSwitch, BngSlider, BngInput, icons, ACCENTS } from "@/common/components/base"
 
 const config = ref({})
@@ -565,15 +504,12 @@ function getOptionLabel(item, val) {
 }
 
 onMounted(() => {
-  refreshVoice()
-  voiceTimer = setInterval(refreshVoice, 500)
   config.value = { ...defaultSettings }
   refresh()
   pollTimer = setInterval(refresh, 2000) // status lines while the page is open
 })
 
 onUnmounted(() => {
-  if (voiceTimer) clearInterval(voiceTimer)
   if (pollTimer) clearInterval(pollTimer)
   pollTimer = null
 })

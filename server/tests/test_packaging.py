@@ -45,10 +45,15 @@ class SourcePackageTest(unittest.TestCase):
             self.assertTrue(got["entry"])
             with zipfile.ZipFile(out / f"BeamNG.Earth-BeamMP-Server-{version}.zip") as archive:
                 self.assertIsNone(archive.testzip())
+                self.assertIn('install_server.py', archive.namelist())
+                self.assertIn('VoiceService/install.py', archive.namelist())
+                self.assertEqual(archive.read('VERSION').decode().strip(), version)
                 self.assertIn("Resources/Server/BeamNGEarth/main.lua", archive.namelist())
                 with zipfile.ZipFile(io.BytesIO(archive.read("Resources/Client/beamng_earth.zip"))) as mod:
                     self.assertIsNone(mod.testzip())
                     self.assertIn("lua/ge/extensions/beamngEarth/serverlist.lua", mod.namelist())
+                    self.assertIn('ui/ui-vue/mods/beamngEarth/EarthSocial.vue', mod.namelist())
+                    self.assertIn('ui/ui-vue/mods/beamngEarth/socialModel.mjs', mod.namelist())
 
 
 class FrozenPackageTest(unittest.TestCase):

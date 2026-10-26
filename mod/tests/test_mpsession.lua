@@ -197,12 +197,20 @@ T.check(#cmds == 2, 'damage: the damaged car to a player who came near again: ' 
 
 -- others: the map's arrows, every player but us, with names and headings
 decoded.o = { ['1'] = { aLat = 36.5, aLon = -118.1, lat = 36.5, lon = -118.1, name = 'me', h = 10 },
-  ['2'] = { aLat = 36.6, aLon = -118.0, lat = 36.6, lon = -118.0, name = 'bob', h = 271.5 },
-  ['3'] = { aLat = 36.6, aLon = -118.0, lat = 36.7, lon = -118.0 } }
+  ['2'] = { aLat = 36.6, aLon = -118.0, lat = 36.6, lon = -118.0, name = 'bob', h = 271.5, mapVisible=true },
+  ['3'] = { aLat = 36.6, aLon = -118.0, lat = 36.7, lon = -118.0, mapVisible=true },
+  ['4'] = { aLat = 36.6, aLon = -118.0, lat = 36.7, lon = -118.0, name='hidden' } }
 handlers.bngeAnchors('o')
 local o = ms.others()
 T.check(#o == 2 and o[1].name == 'bob' and o[1].h == 271.5 and o[2].name == 'player 3' and o[2].h == nil,
   'others: the other players, named, with headings')
+T.check(#ms.socialState().players == 4, 'hidden map markers remain in the social roster')
+T.check(not ms.setMapVisible(true), 'older servers cannot imply visibility support')
+decoded.socialConfig = {socialVersion=1,me='1'}
+handlers.bngeConfig('socialConfig')
+T.check(ms.setMapVisible(true) and ms.socialState().mapVisible, 'map visibility is an explicit session choice')
+ms.onPostJoin()
+T.check(not ms.socialState().mapVisible, 'new session defaults map visibility to hidden')
 
 -- a car the game deleted here (BeamMP's sphere) comes back once its owner is near, not again at once
 local restored = {}

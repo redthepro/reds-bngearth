@@ -65,7 +65,8 @@ end
 function G.anchors(players)
   local out = {}
   for pid, p in pairs(players) do
-    out[tostring(pid)] = { aLat = p.aLat, aLon = p.aLon, lat = p.lat, lon = p.lon, name = p.name, h = p.h }
+    out[tostring(pid)] = { aLat = p.aLat, aLon = p.aLon, lat = p.lat, lon = p.lon, name = p.name, h = p.h,
+      mapVisible = p.mapVisible == true }
   end
   return out
 end
@@ -74,7 +75,7 @@ end
 function G.meetingPlace(players, newPid)
   local best = nil
   for pid, p in pairs(players) do
-    if pid ~= newPid and (not best or (p.joinedAt or 0) < (players[best].joinedAt or 0)
+    if p.mapVisible == true and pid ~= newPid and (not best or (p.joinedAt or 0) < (players[best].joinedAt or 0)
         or ((p.joinedAt or 0) == (players[best].joinedAt or 0) and pid < best)) then
       best = pid
     end
@@ -99,6 +100,7 @@ function G.onPose(pid, d, name)
   end
   local moved = first or p.aLat ~= aLat or p.aLon ~= aLon
   p.name, p.aLat, p.aLon, p.lat, p.lon, p.t = name, aLat, aLon, lat, lon, G.clock
+  p.mapVisible = d.mapVisible == true
   local h = tonumber(d.h)
   p.h = (h and h >= 0 and h <= 360) and h or nil
   local sp = tonumber(d.sp)
@@ -195,7 +197,7 @@ end
 function G.announcement(cfg, players)
   local first = nil
   for _, p in pairs(players) do
-    if not first or (p.joinedAt or 0) < (first.joinedAt or 0) then first = p end
+    if p.mapVisible == true and (not first or (p.joinedAt or 0) < (first.joinedAt or 0)) then first = p end
   end
   local n = 0
   for _ in pairs(players) do n = n + 1 end
@@ -218,6 +220,7 @@ if MP and MP.RegisterEvent then
   local function encode(t) return Util.JsonEncode(t) end
 
   function BNGE_onPose(pid, data)
+    if type(data) ~= 'string' or #data > 4096 then return end
     local ok, d = pcall(Util.JsonDecode, data)
     if not ok then return end
     local known = G.players[pid] ~= nil
@@ -228,7 +231,9 @@ if MP and MP.RegisterEvent then
       if okI and type(ids) == 'table' and type(ids.ip) == 'string' then p.ip = ids.ip end
     end
     if p and not known then
-      MP.TriggerClientEvent(pid, 'bngeConfig', encode(G.config()))
+      local cfg = G.config()
+      cfg.socialVersion, cfg.me = 1, tostring(pid)
+      MP.TriggerClientEvent(pid, 'bngeConfig', encode(cfg))
       print(string.format('[BeamNG.Earth] %s at %.5f, %.5f (anchor %s)', tostring(p.name), p.lat, p.lon,
         G.key(p.aLat, p.aLon)))
     end
@@ -243,8 +248,31 @@ if MP and MP.RegisterEvent then
 
   function BNGE_onLeave(pid) G.onLeave(pid) end
 
+  -- A dedicated event changes the marker immediately, even while the player is
+  -- paused in the map. Identity always comes from BeamMP, never a supplied PID.
+  function BNGE_mapVisibility(pid, data)
+    if type(data) ~= 'string' or #data > 128 then return end
+    local ok, d = pcall(Util.JsonDecode, data)
+    local p = G.players[pid]
+    if not p or not ok or type(d) ~= 'table' or type(d.visible) ~= 'boolean' then return end
+    p.mapVisible = d.visible
+    MP.TriggerClientEvent(-1, 'bngeAnchors', encode(G.anchors(G.live())))
+  end
+
   function BNGE_tick()
     MP.TriggerClientEvent(-1, 'bngeAnchors', encode(G.tick(G.TICK_MS / 1000)))
+    -- The social roster includes connected players still loading their world;
+    -- it carries no coordinates and works without a voice service installed.
+    local roster = {}
+    if MP.GetPlayers then
+      for pid, name in pairs(MP.GetPlayers()) do
+        local p = G.players[tonumber(pid)]
+        roster[tostring(pid)] = {name=tostring(name):sub(1,80),mapVisible=p and p.mapVisible==true or false}
+      end
+    else
+      for pid,p in pairs(G.live()) do roster[tostring(pid)]={name=p.name,mapVisible=p.mapVisible==true} end
+    end
+    MP.TriggerClientEvent(-1, 'bngeSocial', encode(roster))
     local groups = G.peers(G.live())
     for pid in pairs(G.sentPeers) do
       if not groups[pid] then
@@ -297,6 +325,7 @@ if MP and MP.RegisterEvent then
   MP.CreateEventTimer('BNGE_announce', G.ANNOUNCE_MS)
   pcall(BNGE_announce)
   MP.RegisterEvent('bngePose', 'BNGE_onPose')
+  MP.RegisterEvent('bngeMapVisibility', 'BNGE_mapVisibility')
   MP.RegisterEvent('onPlayerDisconnect', 'BNGE_onLeave')
   MP.RegisterEvent('BNGE_tick', 'BNGE_tick')
   MP.CreateEventTimer('BNGE_tick', G.TICK_MS)

@@ -64,6 +64,13 @@ export async function onLoad() {
     icon: "globe",
     componentName: "/ui/ui-vue/mods/beamngEarth/EarthSettings.vue",
   })
+  await lua.extensions.ui_pause_actions.registerModButton({
+    id: "beamngEarth-social",
+    tabId: "mods",
+    label: "Earth Social & Voice",
+    icon: "globe",
+    componentName: "/ui/ui-vue/mods/beamngEarth/EarthSocial.vue",
+  })
   // tell the mod the page exists: its imgui window becomes a compact HUD (settings.lua)
   if (window.bngApi && window.bngApi.engineLua) {
     window.bngApi.engineLua("if beamngEarth_settings then beamngEarth_settings.setPageExists(true) end")
@@ -78,6 +85,7 @@ export async function onLoad() {
 export async function onUnload() {
   try { (await import("./earthServers.js")).stop() } catch (e) { /* never started */ }
   await lua.extensions.ui_pause_actions.unregisterModButton("beamngEarth-settings")
+  await lua.extensions.ui_pause_actions.unregisterModButton("beamngEarth-social")
   try {
     if (window.bngRoutes) window.bngRoutes.remove([MAP_SOURCE])
     if (lua.extensions.ui_router_routeManager) {

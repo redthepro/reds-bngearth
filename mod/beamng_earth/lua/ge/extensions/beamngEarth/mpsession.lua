@@ -57,6 +57,8 @@ M.SETTLE_S = 10             -- ... and not within this of our own anchor's last 
 
 local handlers = false
 local anchors = {}          -- tostring(server player id) -> { aLat, aLon, lat, lon } (bngeAnchors)
+local mapVisible = false    -- session opt-in; hiding markers never disables vehicle sync
+local socialRoster = nil
 local deactivated = {}      -- game vehicle id -> true: deactivated here
 local waitGround = {}       -- game vehicle id -> { x, y, since }: to come back on, waiting for its ground
 local floating = {}         -- game vehicle id -> true: floating here (off our block, gravity off)
@@ -524,6 +526,8 @@ end
 -- BeamMP's join done (core.lua onBeamMPPostJoin): the first pose asks the plugin where the others are.
 function M.onPostJoin()
   joined, wentTo, camPlaced = true, false, false
+  mapVisible = false
+  socialRoster = nil
   anchors = {}
 end
 
@@ -769,6 +773,11 @@ function M.update(dt, anchor, player)
     AddEventHandler('bngeGoTo', onGoTo, 'beamngEarth')
     AddEventHandler('bngePeers', onPeers, 'beamngEarth')
     AddEventHandler('bngeConfig', onConfig, 'beamngEarth')
+    AddEventHandler('bngeSocial', function(raw)
+      if type(raw) ~= 'string' or #raw > 65536 then return end
+      local ok, d = pcall(jsonDecode,raw)
+      if ok and type(d)=='table' then socialRoster=d end
+    end, 'beamngEarth')
     handlers = true
   end
   local mpanchor = require('beamngEarth/mpanchor')
@@ -872,6 +881,7 @@ function M.update(dt, anchor, player)
     end
     TriggerServerEvent('bngePose', jsonEncode({ v = M.PROTO, aLat = anchor.lat, aLon = anchor.lon, lat = lat,
       lon = lon, joined = joined, h = h and math.floor(h * 10 + 0.5) / 10 or nil,
+      mapVisible = mapVisible,
       sp = share and share.port or nil, sc = share and share.code or nil, sw = share and share.weight or nil,
       st = share and share.token or nil }))
     stats.poses = stats.poses + 1
@@ -1013,6 +1023,8 @@ end
 
 -- The session's end (BeamMP left, the level's end): the deactivated cars back on, everything forgotten.
 function M.reset()
+  mapVisible = false
+  socialRoster = nil
   if share ~= nil then require('beamngEarth/net').send({ type = 'share_stop' }) end
   for gid in pairs(deactivated) do
     local veh = vehicle(gid)
@@ -1037,13 +1049,37 @@ end
 function M.others()
   local out, mine = {}, myPid()
   for k, a in pairs(anchors) do
-    if k ~= mine and type(a) == 'table' and tonumber(a.lat) and tonumber(a.lon) then
-      out[#out + 1] = { name = type(a.name) == 'string' and a.name or ('player ' .. k), lat = tonumber(a.lat),
+    if k ~= mine and type(a) == 'table' and a.mapVisible == true and tonumber(a.lat) and tonumber(a.lon) then
+      out[#out + 1] = { id = k, name = type(a.name) == 'string' and a.name or ('player ' .. k), lat = tonumber(a.lat),
         lon = tonumber(a.lon), h = tonumber(a.h) }
     end
   end
   table.sort(out, function(x, y) return x.name < y.name end)
   return out
+end
+
+function M.setMapVisible(on)
+  if type(on) ~= 'boolean' then return false end
+  -- Fail closed with older servers: they do not advertise the visibility flag.
+  if not config or config.socialVersion ~= 1 then return false end
+  mapVisible, poseIn = on, 0
+  if rawget(_G, 'TriggerServerEvent') then
+    TriggerServerEvent('bngeMapVisibility', jsonEncode({visible=on}))
+  end
+  return true
+end
+
+function M.socialState()
+  local players = {}
+  for id, a in pairs(socialRoster or anchors) do
+    if type(a) == 'table' then
+      players[#players+1] = {id=tostring(id), name=type(a.name)=='string' and a.name or ('Player '..id),
+        mapVisible=a.mapVisible==true}
+    end
+  end
+  table.sort(players, function(a,b) return a.name == b.name and a.id < b.id or a.name < b.name end)
+  return {players=players, me=myPid() or (config and config.me) or '', mapVisible=mapVisible,
+    supported=config and config.socialVersion==1 or false}
 end
 
 -- (tests, the dev tools)

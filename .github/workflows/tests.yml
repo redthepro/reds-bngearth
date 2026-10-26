@@ -58,6 +58,11 @@ jobs:
         run: |
           node server/tests/test_mapmath.mjs
           node mod/tests/test_mapmath.mjs
+          node mod/tests/test_social.mjs
+      - name: Compile social and map UI
+        run: |
+          npm install --prefix build/social-ui-check --no-audit --no-fund vue@3.5.22 @vue/compiler-sfc@3.5.22 @vue/server-renderer@3.5.22
+          node tools/check_social_ui.mjs
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:

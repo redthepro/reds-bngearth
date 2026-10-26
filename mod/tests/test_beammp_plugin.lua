@@ -19,6 +19,7 @@ place, moved = G.onPose(1, { v = G.PROTO, aLat = 36.2, aLon = -118, lat = 36.2, 
 T.check(moved == true, 'a rebase: the anchors go out at once')
 
 -- a second player joining 80 miles away: sent to the first; near: not
+G.players[1].mapVisible = true -- visible players can be used as a meeting place
 G.tick(2)
 place = G.onPose(2, { v = G.PROTO, aLat = 35, aLon = -118.7, lat = 35, lon = -118.7, joined = true }, 'b')
 T.check(place and place.lat == 36.2 and place.lon == -118, 'a joining player far away: sent to the first player')
@@ -29,6 +30,9 @@ T.check(place == nil, 'a joining player already near them: stays')
 local a = G.anchors(G.live())
 T.check(a['1'] and a['1'].aLat == 36.2 and a['2'] and a['2'].lon == -118.7 and a['3'], 'anchors: every player')
 T.check(a['1'].name == 'a' and a['1'].h == nil, 'anchors: the name, no heading without one')
+T.check(a['2'].mapVisible == false, 'map visibility defaults to hidden')
+G.onPose(1, {v=G.PROTO,aLat=36.2,aLon=-118,lat=36.2,lon=-118,mapVisible=true}, 'a')
+T.check(G.anchors(G.live())['1'].mapVisible == true, 'only explicit map opt-in publishes the marker flag')
 G.onPose(1, { v = G.PROTO, aLat = 36.2, aLon = -118, lat = 36.2, lon = -118, h = 90.5 }, 'a')
 T.check(G.anchors(G.live())['1'].h == 90.5, 'anchors: the heading (the map arrows)')
 G.onPose(1, { v = G.PROTO, aLat = 36.2, aLon = -118, lat = 36.2, lon = -118, h = 'x' }, 'a')
@@ -109,9 +113,10 @@ T.check(not G.listable({ private = false, authKey = zeros }), 'listable: no key:
 G.LISTED = false
 T.check(not G.listable({ private = false, authKey = key }), 'listable: G.LISTED = false')
 G.LISTED = true
-local a = G.announcement(cfg, { [1] = { lat = 36.61, lon = -118.17, joinedAt = 5 }, [2] = { lat = 50, lon = 8, joinedAt = 9 } })
+local a = G.announcement(cfg, { [1] = { lat = 36.61, lon = -118.17, joinedAt = 5, mapVisible=true }, [2] = { lat = 50, lon = 8, joinedAt = 9 } })
 T.check(a.port == 30814 and a.players == 2 and a.maxPlayers == 8 and a.place == '36.6, -118.2', 'announcement: from the longest-joined player')
 T.check(G.announcement(cfg, {}).place == nil and G.announcement(cfg, {}).players == 0, 'announcement: no one on')
+T.check(G.announcement(cfg, {[1]={lat=36,lon=-118}}).place == nil, 'hidden players do not supply the public server location')
 T.check(G.announceCmd('http://x/announce', 'f.json', false):match('^curl .* @f%.json "http://x/announce" >/dev/null 2>&1 &$') ~= nil,
   'announceCmd: Linux, in the background')
 T.check(G.announceCmd('http://x/announce', 'f.json', true):match('^start "" /b curl .* >NUL 2>&1$') ~= nil, 'announceCmd: Windows, in the background')
