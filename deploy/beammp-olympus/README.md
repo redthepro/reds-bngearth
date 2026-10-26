@@ -2,7 +2,7 @@
 
 This is a standard BeamMP server with the BeamNG.Earth client mod and server plugin. Each player's companion app generates terrain locally. Olympus exposes only **30814 TCP and UDP**, with no companion or compute-sharing endpoint.
 
-The template server name is `github.com/reds-bngearth - 1.8.2 Development Test`. It is configured for 100 player slots and one car per player, with limits of four CPUs, 4 GiB RAM and 512 processes on the eight-CPU, 23 GiB host. These are configured slots; 100-player performance has not been load tested. It runs as the rootless Podman user with a read-only image and persistent data under `~/beamng-earth-server/data`.
+The template server name is `github.com/reds-bngearth - 1.8.3 Development Test`. It is configured for 100 player slots and one car per player, with limits of four CPUs, 4 GiB RAM and 512 processes. Olympus currently reports eight CPUs and 7.2 GiB of guest RAM (2026-10-26); check available memory before applying container limits. These are configured slots; 100-player performance has not been load tested. It runs as the rootless Podman user with a read-only image and persistent data under `~/beamng-earth-server/data`.
 
 Keep the application's bind address at `IP = "::"` for dual-stack operation. BeamMP 3.9.3's authentication code casts incoming addresses to IPv6 before handling mapped IPv4; forcing `0.0.0.0` accepts a TCP socket but throws `bad address cast` during a real join. The host still publishes only the intended IPv4 game ports.
 

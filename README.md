@@ -2,7 +2,7 @@
 
 This is [redthepro/reds-bngearth](https://github.com/redthepro/reds-bngearth), a fork of
 [TecnaGamer's BeamNG.Earth](https://github.com/TecnaGamer/BeamNG.Earth) focused on terrain loading,
-driving quality, and reliability. **Version 1.8.2 includes upstream 1.6.2-beta plus the changes below.**
+driving quality, and reliability. **Version 1.8.4 includes upstream 1.6.3-beta plus the changes below.**
 The original streamed world, map data integration, and BeamMP foundation come from TecnaGamer and the
 upstream contributors.
 
@@ -12,10 +12,10 @@ real curvature of the Earth.
 
 [Download this fork](https://github.com/redthepro/reds-bngearth/releases) ·
 [Report a fork issue](https://github.com/redthepro/reds-bngearth/issues) ·
-[Installation](#install-and-play) · [Social & voice](#social-and-voice-in-182) ·
+[Installation](#install-and-play) · [Social & voice](#social-and-voice-in-183) ·
 [Changelog](CHANGELOG.md) · [Build status](https://github.com/redthepro/reds-bngearth/actions/workflows/release.yml)
 
-## Social and voice in 1.8.2
+## Social and voice in 1.8.3
 
 This release adds **nearby positional voice, a server-wide channel, and private groups** to the fork's
 terrain and driving improvements. Audio capture, Opus encoding, playback, and spatial mixing run in native
@@ -26,6 +26,9 @@ server player list, nearby/global/group channel cards, microphone/output selecti
 mutes, and group invitations. The same panel is available inside Earth settings. It ships inside the main
 EXE/AppImage’s mod and the matching BeamMP client ZIP; no extra client mod or Mumble app is needed.
 
+Use the **Voice On / Voice Muted** slider: green enables voice for the session; red disables listening and microphone
+capture. Device menus show the resolved system default and the actual devices in use. **Refresh devices** updates
+the list without opening the microphone; selecting a device applies it immediately while voice is enabled.
 Enable voice for the session to listen to nearby players and your private group. Use **Join global** to listen
 or talk on the server-wide channel; global is off until you join it. Hold a key to talk:
 
@@ -40,7 +43,8 @@ Release, close the panel, switch focus, or wait 10 seconds to stop it. **Audio d
 confirms capture from the selected input; another player hearing you confirms the full connection. Outside this
 explicit test or a granted push-to-talk press, microphone capture is idle. The driving HUD shows microphone use,
 your transmitting channel, and players you are hearing.
-Create a private group there, invite players, accept invitations, or leave; the owner can remove members.
+Create a private group there, invite players currently connected to this server, accept invitations, or leave;
+the owner can remove members. Invitations from disconnected players cannot be accepted.
 Groups support 16 members and invitations expire after 30 seconds. Voice is opt-in again after leaving
 multiplayer; releasing the key or losing game focus stops transmission.
 
@@ -69,7 +73,7 @@ The deployment is configured for 100 players, but has not been load tested with 
 
 ## What this fork changes
 
-Compared with upstream 1.6.2-beta:
+Compared with upstream 1.6.3-beta:
 
 - **Terrain loading prioritizes driving.** Visual tiles along the car's predicted path are processed before
   other visible tiles, then the surrounding reserve. Follow-up collision blocks wait at most 150 ms for their
@@ -336,7 +340,7 @@ Player downloads: `python3 tools/build_app.py` builds this system's AppImage / .
 docstring; for the .exe run `tools/build_bootloader.py` first: a bootloader built from source, fewer antivirus
 false positives). Every push to `main` runs the Windows/Linux regression suites, compiles the Rust kernels,
 builds and smoke-tests both executables, and publishes a GitHub release with the matching BeamMP package and
-`SHA256SUMS.txt`. A version bump publishes its named release, such as **`v1.8.2`**. Other commits use
+`SHA256SUMS.txt`. A version bump publishes its named release, such as **`v1.8.3`**. Other commits use
 `v<VERSION>-build.<workflow-run-number>.g<commit-sha>`. The selected version is embedded in the downloads.
 Failed tests or builds prevent publication. Separate pushes keep their own builds; an older build finishing late
 cannot replace the current main build as Latest. Preview/alpha/rc versions remain prereleases.

@@ -320,6 +320,8 @@ struct AudioEngine {
     input: Option<cpal::Stream>,
     output: Option<cpal::Stream>,
     active: Cell<u8>,
+    input_name: String,
+    output_name: String,
 }
 #[pymethods]
 impl AudioEngine {
@@ -329,6 +331,8 @@ impl AudioEngine {
         let state = Arc::new(Mutex::new(Core::new().map_err(error)?));
         let indev = choose(true, input)?;
         let outdev = choose(false, output)?;
+        let input_name = indev.name().map_err(error)?;
+        let output_name = outdev.name().map_err(error)?;
         let incfg = indev.default_input_config().map_err(error)?;
         let outcfg = outdev.default_output_config().map_err(error)?;
         let input = match incfg.sample_format() {
@@ -357,6 +361,8 @@ impl AudioEngine {
             input: Some(input),
             output: Some(output),
             active: Cell::new(0),
+            input_name,
+            output_name,
         })
     }
     fn set_ptt(&self, mode: u8) -> PyResult<()> {
@@ -400,6 +406,9 @@ impl AudioEngine {
             self.active.set(mode);
         }
         Ok(())
+    }
+    fn selected_devices(&self) -> (String, String) {
+        (self.input_name.clone(), self.output_name.clone())
     }
     fn take_encoded<'py>(&self, py: Python<'py>) -> PyResult<Vec<(u8, Bound<'py, PyBytes>)>> {
         let mut state = self.state.lock().map_err(error)?;
@@ -521,11 +530,27 @@ fn devices() -> PyResult<(Vec<String>, Vec<String>)> {
         .collect();
     Ok((inputs, outputs))
 }
+/// Enumeration and defaults only: no streams are built or played.
+#[pyfunction]
+fn device_info() -> PyResult<(Vec<String>, Vec<String>, String, String)> {
+    let (inputs, outputs) = devices()?;
+    let host = cpal::default_host();
+    let input = host
+        .default_input_device()
+        .and_then(|d| d.name().ok())
+        .unwrap_or_default();
+    let output = host
+        .default_output_device()
+        .and_then(|d| d.name().ok())
+        .unwrap_or_default();
+    Ok((inputs, outputs, input, output))
+}
 #[pymodule]
 fn earthvoice(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<AudioEngine>()?;
     module.add_class::<OpusCodec>()?;
     module.add_function(wrap_pyfunction!(devices, module)?)?;
+    module.add_function(wrap_pyfunction!(device_info, module)?)?;
     module.add("VERSION", 1)?;
     Ok(())
 }

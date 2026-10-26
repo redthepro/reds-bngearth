@@ -63,6 +63,12 @@ function BNGE_voiceAction(pid, raw)
   p.actionAt = V.time
   local ok, d = pcall(Util.JsonDecode, raw); if not ok or type(d) ~= 'table' then return end
   local target = tostring(d.player or '')
+  local function connected(id)
+    if not id:match('^%d+$') then return false end
+    local name=MP.GetPlayerName(tonumber(id))
+    return type(name)=='string' and name~=''
+  end
+  if not connected(pid) then return end
   if d.action == 'create' and p.group == '' then
     V.serial = V.serial + 1
     p.group = epoch .. ':' .. V.serial
@@ -70,13 +76,13 @@ function BNGE_voiceAction(pid, raw)
     result(true,'Private group created. Invite a player from the list.')
   elseif d.action == 'invite' then
     local g = V.groups[p.group]
-    if g and g.owner == pid and V.players[target] and V.players[target].group == '' then
+    if g and g.owner == pid and connected(target) and V.players[target] and V.players[target].group == '' then
       V.invites[target] = { group = p.group, expires = V.time + 30, from = pid }
       result(true,'Invitation sent. It expires in 30 seconds.')
     else result(false,'Only the owner can invite a player who is not already in a group.') end
   elseif d.action == 'accept' and p.group == '' then
     local invite = V.invites[pid]; local g = invite and V.groups[invite.group]
-    if g and invite.expires > V.time then
+    if g and connected(invite.from) and g.members[invite.from] and invite.expires > V.time then
       local n = 0; for _ in pairs(g.members) do n = n+1 end
       if n < 16 then p.group = invite.group; g.members[pid] = true; result(true,'Joined private group.')
       else result(false,'This group already has 16 members.') end
