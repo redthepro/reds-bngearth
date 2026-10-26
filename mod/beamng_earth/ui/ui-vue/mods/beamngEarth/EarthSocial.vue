@@ -49,15 +49,17 @@
                 the server.
               </p>
             </div>
-            <label class="toggle"
-              ><input
-                type="checkbox"
-                :checked="voice.options.enabled"
-                :disabled="!voice.available || !voice.companion"
-                @change="control('enabled', $event.target.checked)"
-              />
-              Voice {{ voice.options.enabled ? 'on' : 'off' }}</label
+            <button
+              class="voice-switch"
+              :class="{ on: voice.options.enabled }"
+              role="switch"
+              :aria-checked="voice.options.enabled"
+              :disabled="!voice.available || !voice.companion"
+              @click="control('enabled', !voice.options.enabled)"
             >
+              <span class="switch-track" aria-hidden="true"><span></span></span>
+              Voice {{ voice.options.enabled ? 'On' : 'Muted' }}
+            </button>
           </div>
           <div class="channels">
             <article
@@ -129,7 +131,12 @@
                 :value="voice.options.input"
                 @change="control('input', $event.target.value)"
               >
-                <option value="">System default</option>
+                <option value="">
+                  System default —
+                  {{
+                    voice.status.deviceDefaults?.input || 'refresh to detect'
+                  }}
+                </option>
                 <option
                   v-for="name in voice.status.inputs"
                   :key="name"
@@ -144,7 +151,12 @@
                 :value="voice.options.output"
                 @change="control('output', $event.target.value)"
               >
-                <option value="">System default</option>
+                <option value="">
+                  System default —
+                  {{
+                    voice.status.deviceDefaults?.output || 'refresh to detect'
+                  }}
+                </option>
                 <option
                   v-for="name in voice.status.outputs"
                   :key="name"
@@ -155,6 +167,36 @@
               </select></label
             >
           </div>
+          <div class="mic-footer device-state">
+            <span
+              >{{
+                voice.status.deviceActive?.input
+                  ? 'Mic in use: ' + voice.status.deviceActive.input
+                  : 'Mic selected: ' +
+                    (voice.options.input ||
+                      voice.status.deviceDefaults?.input ||
+                      'System default')
+              }}<br />
+              {{
+                voice.status.deviceActive?.output
+                  ? 'Output in use: ' + voice.status.deviceActive.output
+                  : 'Output selected: ' +
+                    (voice.options.output ||
+                      voice.status.deviceDefaults?.output ||
+                      'System default')
+              }}</span
+            >
+            <button :disabled="!voice.companion" @click="refreshDevices">
+              Refresh devices
+            </button>
+          </div>
+          <p
+            v-if="voice.status.deviceError"
+            class="notice warning"
+            role="alert"
+          >
+            {{ voice.status.deviceError }}
+          </p>
           <div
             class="mic-meter"
             role="meter"
@@ -232,9 +274,7 @@
         <div v-if="voice.state.invite" class="invite" role="status">
           <strong>Group invitation</strong>
           <p>
-            {{
-              voice.state.roster[voice.state.invite]?.name || 'A player'
-            }}
+            {{ voice.state.roster[voice.state.invite]?.name || 'A player' }}
             invited you.
           </p>
           <button @click="action('accept')">Join group</button
@@ -302,6 +342,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { channels, normalize, playersIn, micLabel } from './socialModel.mjs'
+import { luaCall } from './socialBridge.mjs'
 defineProps({ compact: { type: Boolean, default: false } })
 const model = ref(normalize(null)),
   search = ref(''),
@@ -334,10 +375,7 @@ function call(expression, callback) {
     message.value = 'Game connection unavailable.'
     return
   }
-  api.engineLua(
-    `local b = beamngEarth_core or beamngEarth; return b and b.socialState and ${expression} or nil`,
-    callback,
-  )
+  api.engineLua(luaCall(expression), callback)
 }
 function refresh() {
   const id = ++request
@@ -407,8 +445,12 @@ function stopTest() {
 function hidden() {
   if (document.hidden) stopTest()
 }
+function refreshDevices() {
+  call('b.voiceDevices and b.voiceDevices()', refresh)
+}
 onMounted(() => {
   refresh()
+  refreshDevices()
   timer = setInterval(refresh, 250)
   window.addEventListener('blur', stopTest)
   document.addEventListener('visibilitychange', hidden)
@@ -423,6 +465,47 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.voice-switch {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  white-space: nowrap;
+  color: #fff;
+  background: #71323c;
+  border-color: #c15b68;
+}
+.voice-switch.on {
+  background: #245c48;
+  border-color: #6bd3a6;
+}
+.switch-track {
+  display: block;
+  width: 36px;
+  height: 20px;
+  padding: 3px;
+  border-radius: 12px;
+  background: #401e27;
+}
+.voice-switch.on .switch-track {
+  background: #153c2e;
+}
+.switch-track span {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #f4d7dc;
+  transition: transform 0.15s;
+}
+.voice-switch.on .switch-track span {
+  transform: translateX(16px);
+  background: #a5f4cf;
+}
+.device-state {
+  margin-top: 12px;
+  color: #afc4d5;
+  font-size: 12px;
+}
 .earth-social {
   box-sizing: border-box;
   color: #e9eef4;
@@ -597,6 +680,12 @@ button {
 }
 button:hover:enabled {
   background: #366655;
+}
+.voice-switch:not(.on):hover:enabled {
+  background: #89404b;
+}
+.voice-switch.on:hover:enabled {
+  background: #30765b;
 }
 button:disabled {
   opacity: 0.4;

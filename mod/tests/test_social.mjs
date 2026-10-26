@@ -47,6 +47,12 @@ assert.equal(rows.find((p) => p.id === '1').speaking, true)
 assert.equal(rows.find((p) => p.id === '2').muted, true)
 assert.equal(rows.find((p) => p.id === '3').base, undefined)
 assert.equal(rows.filter((p) => p.inGroup).length, 2)
+active.social.supported = true
+active.voice.state.roster['99'] = { name: 'Disconnected player', base: 3999 }
+assert.equal(
+  playersIn(active).some((p) => p.id === '99'),
+  false,
+)
 assert.match(
   micLabel({ active: true, detected: true }, false),
   /microphone working/,

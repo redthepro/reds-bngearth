@@ -2,6 +2,18 @@
 
 What changed in each release of BeamNG.Earth, newest first.
 
+## 1.8.3 (2026-10-26)
+
+- Fixed the Social & Voice panel passing a Lua statement block where the game callback requires an expression.
+  State polling, enabling voice, device selection and channel/group controls now reach the game extension.
+- Replaced the voice checkbox with a green **Voice On** / red **Voice Muted** slider switch.
+- Added device enumeration while muted, resolved system-default labels, active device names and a refresh control.
+  Changing microphone or output immediately reopens audio with the selected devices.
+- Limited group invitations to players currently connected to this server, rejected stale invitations from
+  disconnected senders, and filtered disconnected entries out of the social player list.
+- Added regression tests that execute the actual JavaScript-generated callback in Lua, plus device-routing and
+  disconnected-player group tests. Global voice remains separately joined and off by default.
+
 ## 1.8.2 (2026-10-26)
 
 - Added a dedicated Mods → Earth Social & Voice control panel, with nearby/global/private-group channel cards,

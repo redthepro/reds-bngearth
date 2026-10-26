@@ -155,7 +155,8 @@ VOICE_MICROPHONE = {"active": F(bool), "level": F(NUM), "detected": F(bool)}
 SERVER_TO_MOD = {
     'voice_status': {'enabled': F(bool), 'error': F(str), 'connected': F(list), 'talk': F(str),
                      'speaking': F(list), 'inputs': F(list), 'outputs': F(list),
-                     'microphone': F(dict), 'testing': F(bool)},
+                     'microphone': F(dict), 'testing': F(bool), 'deviceDefaults': F(dict),
+                     'deviceActive': F(dict), 'deviceError': F(str)},
     "server_list": {"servers": F(list, OPT), "error": F(str, OPT)},   # earthd.server_list (the list service)
     "geocode_result": {"id": F(int), "results": F(list), "error": F(str, OPT)},   # geocode.py (Photon)
     "route_result": {"id": F(int), "points": F(list), "dist": F(NUM), "dur": F(NUM), "error": F(str, OPT)},  # OSRM

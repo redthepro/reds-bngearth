@@ -54,7 +54,7 @@ the service to 2 CPUs, 2 GiB RAM and 128 processes; 300 voice connections cover
 100-player load-test result.
 
 1. Copy this directory to the host and build with `podman build -t
-   localhost/beamng-earth-voice:1.8.2 <directory>`.
+   localhost/beamng-earth-voice:1.8.3 <directory>`.
 2. Run `python3 initialize.py --data ~/beamng-earth-voice-data --game
    ~/beamng-earth-voice-registry --host YOUR_PUBLIC_IP_OR_DNS`. It generates
    a stable certificate and private secrets without printing credentials.

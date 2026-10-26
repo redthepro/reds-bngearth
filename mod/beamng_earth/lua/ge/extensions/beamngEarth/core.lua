@@ -87,6 +87,7 @@ function M.voiceControl(raw) voice.control(raw) end
 function M.voiceAction(action, player) voice.action(action, player) end
 function M.voiceState() return voice.uiState() end
 function M.voiceTest(on) voice.test(on) end
+function M.voiceDevices() voice.devices() end
 function M.socialState() return {session=beammp.inSession(), social=mpsession.socialState(), voice=voice.uiState()} end
 function M.mapVisibility(on) return mpsession.setMapVisible(on) end
 local mpanchor = require('beamngEarth/mpanchor')       -- BeamMP: other players' positions into our frame (PR #88)

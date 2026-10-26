@@ -1,6 +1,6 @@
 [General]
-Name = "github.com/reds-bngearth - 1.8.2 Development Test"
-Description = "BeamNG.Earth 1.8.2 development test. Every player needs the matching BeamNG.Earth companion app: https://github.com/redthepro/reds-bngearth/releases"
+Name = "github.com/reds-bngearth - 1.8.3 Development Test"
+Description = "BeamNG.Earth 1.8.3 development test. Every player needs the matching BeamNG.Earth companion app: https://github.com/redthepro/reds-bngearth/releases"
 Port = 30814
 IP = "::"
 AuthKey = ""

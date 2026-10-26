@@ -67,8 +67,10 @@ export function playersIn(data) {
   const rows = new Map(
     data.social.players.map((p) => [String(p.id), { ...p, id: String(p.id) }]),
   )
-  for (const [id, p] of Object.entries(roster))
-    rows.set(id, { ...rows.get(id), ...p, id })
+  for (const [id, p] of Object.entries(roster)) {
+    if (!data.social.supported || rows.has(id))
+      rows.set(id, { ...rows.get(id), ...p, id })
+  }
   return [...rows.values()]
     .map((p) => ({
       ...p,

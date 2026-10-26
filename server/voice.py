@@ -38,7 +38,7 @@ class VoiceManager:
         if self.thread is None:
             self.thread = threading.Thread(target=self._run, name='earth-voice', daemon=True)
             self.thread.start()
-        if not isinstance(message, dict) or message.get('action') not in ('session', 'state', 'control', 'pose', 'ptt', 'reset', 'mic_test'):
+        if not isinstance(message, dict) or message.get('action') not in ('session', 'state', 'control', 'pose', 'ptt', 'reset', 'mic_test', 'devices'):
             raise ValueError('invalid voice action')
         try:
             self.commands.put_nowait(dict(message))
@@ -64,6 +64,22 @@ class VoiceManager:
         last_status = None
         test_at, test_until = 0., 0.
         testing = False
+        defaults = {'input': '', 'output': ''}
+        device_error = ''
+
+        def refresh_devices():
+            nonlocal native, inputs, outputs, defaults, device_error
+            try:
+                if native is None:
+                    import earthvoice as native
+                if hasattr(native, 'device_info'):
+                    inputs, outputs, default_input, default_output = native.device_info()
+                    defaults = {'input': default_input, 'output': default_output}
+                else:
+                    inputs, outputs = native.devices()
+                device_error = ''
+            except Exception:
+                device_error = 'Audio devices could not be listed. Check the companion installation and audio drivers.'
 
         def status():
             nonlocal last_status
@@ -78,7 +94,11 @@ class VoiceManager:
             message = {'type': 'voice_status', 'enabled': options['enabled'], 'error': error,
                          'connected': [r for r, c in clients.items() if c.ready],
                          'talk': mode, 'speaking': [uid for uid, at in speaking.items() if time.monotonic()-at < .3],
-                         'inputs': inputs, 'outputs': outputs, 'microphone': microphone, 'testing': testing}
+                         'inputs': inputs, 'outputs': outputs, 'microphone': microphone, 'testing': testing,
+                         'deviceDefaults': defaults, 'deviceActive': {}, 'deviceError': device_error}
+            if engine and hasattr(engine, 'selected_devices'):
+                input_name, output_name = engine.selected_devices()
+                message['deviceActive'] = {'input': input_name, 'output': output_name}
             if message != last_status:
                 self.notify(message)
                 last_status = message
@@ -118,7 +138,14 @@ class VoiceManager:
                         except queue.Empty:
                             break
                         action = msg['action']
-                        if action == 'session':
+                        if action == 'devices':
+                            refresh_devices()
+                            if engine and hasattr(engine, 'selected_devices'):
+                                active_input, active_output = engine.selected_devices()
+                                if ((not options.get('input') and defaults['input'] != active_input)
+                                        or (not options.get('output') and defaults['output'] != active_output)):
+                                    engine.close(); engine = None; retry_at = 0.
+                        elif action == 'session':
                             data = msg.get('data', {})
                             if not isinstance(data, dict) or not isinstance(data.get('base'), int):
                                 raise ValueError('invalid voice session')
@@ -150,10 +177,12 @@ class VoiceManager:
                             if engine:
                                 for base in options['muted']:
                                     for offset in range(3): remove(base + offset)
-                            device_changed = any(data.get(k) != options.get(k) for k in ('input', 'output'))
-                            options.update({k: str(data.get(k, ''))[:512] for k in ('input', 'output')})
+                            selected = {k: str(data.get(k, options.get(k, '')))[:512] for k in ('input', 'output')}
+                            device_changed = any(selected[k] != options.get(k, '') for k in selected)
+                            options.update(selected)
                             if device_changed and engine:
                                 engine.close(); engine = None
+                            if device_changed: retry_at = 0.
                         elif action == 'pose':
                             listener, right = vector(msg.get('pos')), vector(msg.get('right'))
                         elif action == 'ptt':
@@ -180,8 +209,7 @@ class VoiceManager:
                         mode = ''
                     elif now >= retry_at:
                         if native is None:
-                            import earthvoice as native
-                            inputs, outputs = native.devices()
+                            refresh_devices()
                         if engine is None:
                             engine = native.AudioEngine(options['input'], options['output'])
                         roles = ['p']

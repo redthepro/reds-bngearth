@@ -54,6 +54,7 @@ class SourcePackageTest(unittest.TestCase):
                     self.assertIn("lua/ge/extensions/beamngEarth/serverlist.lua", mod.namelist())
                     self.assertIn('ui/ui-vue/mods/beamngEarth/EarthSocial.vue', mod.namelist())
                     self.assertIn('ui/ui-vue/mods/beamngEarth/socialModel.mjs', mod.namelist())
+                    self.assertIn('ui/ui-vue/mods/beamngEarth/socialBridge.mjs', mod.namelist())
 
 
 class FrozenPackageTest(unittest.TestCase):
