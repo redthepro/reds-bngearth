@@ -125,8 +125,9 @@ It checks streaming coverage under controlled conditions; actual loading times a
 the PC, location, cache, network, and BeamNG. Personal graphics settings applied to a test PC are not shipped as
 a universal preset in this fork.
 
-Upstream improvements remain included, such as the BeamMP server browser and launcher integration, Windows file
-loading improvements, terrain shadow-stutter fixes, and bridge/tunnel loading repairs. See the
+Upstream 1.6.3-beta improvements remain included: GPS-route prefetch, reusable place caches, gas stations,
+railway detail, Vienna speed signs, configurable server time/weather, selectable game/cache paths and further
+bridge/underpass repairs. The BeamMP browser, launcher integration and terrain shadow-stutter fixes remain. See the
 [changelog](CHANGELOG.md) for the inherited releases and this fork's additions.
 
 Status: beta (see [VERSION](VERSION)); intended for BeamNG.drive 0.40.x. Upstream reports testing on 0.40.3

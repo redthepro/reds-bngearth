@@ -242,9 +242,6 @@ BASE_WAIT_S = 0.15             # follow blocks wait at most this long after thei
 ROUTE_AHEAD_ON = True            # --route-prefetch
 ROUTE_AHEAD_MAX_M = 20000.0      # --route-prefetch-km * 1000 (15-25 km is sane; the user, 2026-10-22)
 ROUTE_RETRY_S = 2.0               # a deferred tile/cell backs off this long before the next one in the corridor
-FAST_BASE_V = 70.0              # m/s (157 mph): faster, a block waits at most BASE_FAST_WAIT_S for its photo after its
-BASE_FAST_WAIT_S = 0.15         # heights, then goes without it (block_base later): blocks took 0.6-3 s at 600 mph on a
-                                # Steam Deck, mostly the photo (heights 0.1-0.4 s), and the game paused 11 times a minute
 PROGRESS_S = 0.5            # load_progress at most this often (Connection.send_progress)
 GROUND_WAIT_S = 90.0        # a block's photo still to be drawn again counts as loading this long at most
 PERF_LOG_LINES, PERF_LOG_CHARS = 40, 2000   # a perf_log message's lines and characters a line, at most
@@ -715,7 +712,6 @@ class Server(SharingServerMixin):
         self.base_stale = set()         # blocks whose base photo lacks lazy imagery (NAIP) still to come
         self.pads_rebuild = set()       # blocks built without gas station pads that lie on them (pads_stale)
         self.pads_changed_at = 0.0      # (time.monotonic) the last new pad: Connection.pads_refresh waits a little
-        self.fast = False               # the player faster than FAST_BASE_V (the latest pose): photos follow blocks
         self.base_pending = {}          # block -> the analysis regions its base photo was rendered without
         self.base_rev = itertools.count(1)
         self.hm_committed = deque(maxlen=HM_KEEP_COMMITTED)
