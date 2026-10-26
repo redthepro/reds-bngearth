@@ -85,6 +85,13 @@ class DetailServerTest(ServerHarness):
         c.send({"type": "prepare_terrain", "requestId": 9, "anchorId": aid, "cx": 130.0, "cy": -190.0})
         tr, _ = c.until(lambda m: m["type"] == "terrain_ready", timeout=60)
         self.assertEqual((tr["cx"], tr["cy"]), (128.0, -128.0))
+        # On a busy Windows worker the asynchronous photo can finish just after
+        # terrain_ready. That is a supported runtime path: block_base carries
+        # the exact same base contract without holding terrain loading hostage.
+        if "base" not in tr:
+            base, _ = c.until(lambda m: m["type"] == "block_base" and m["anchorId"] == aid
+                              and (m["cx"], m["cy"]) == (128.0, -128.0), timeout=60)
+            tr.update(base)
         self.assertEqual(tr["baseSize"], 512 * 2.0)
         path = self.fs(tr["base"])
         self.assertTrue(path.endswith("_base.png") and os.path.exists(path))

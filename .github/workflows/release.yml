@@ -44,8 +44,11 @@ jobs:
           base=$(tr -d '[:space:]' < VERSION)
           [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || exit 1
           previous=$(git show HEAD^:VERSION 2>/dev/null | tr -d '[:space:]' || true)
-          # A version bump publishes the named release; later commits keep unique build tags.
-          if [ "$previous" != "$base" ]; then
+          # A version bump publishes the named release. If that first run fails
+          # before creating its tag, a corrective commit must retry the same
+          # named version rather than silently downgrade it to a build tag.
+          # Once the tag exists, later commits keep unique build tags.
+          if [ "$previous" != "$base" ] || ! git ls-remote --exit-code --tags origin "refs/tags/v$base" >/dev/null 2>&1; then
             # A named release must have release notes for precisely the version
             # being published. This prevents an artifact/release-name bump from
             # silently leaving its changelog and update information behind.
