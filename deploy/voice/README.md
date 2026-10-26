@@ -30,12 +30,15 @@ the service to 2 CPUs, 2 GiB RAM and 128 processes; 300 voice connections cover
 1. Copy this directory to the host and build with `podman build -t
    localhost/beamng-earth-voice:1.7.0 <directory>`.
 2. Run `python3 initialize.py --data ~/beamng-earth-voice-data --game
-   ~/beamng-earth-server/data/voice --host YOUR_PUBLIC_IP_OR_DNS`. It generates
+   ~/beamng-earth-voice-registry --host YOUR_PUBLIC_IP_OR_DNS`. It generates
    a stable certificate and private secrets without printing credentials.
 3. Install `beamng-earth-voice.container` in the user's Quadlet directory, reload
    the user manager and start its generated service. Adjust host volume paths
-   for a different BeamMP installation. Both services need access to the voice
-   registry directory. Do not copy populated config or credentials into Git.
+   for a different BeamMP installation. Mount the separate registry directory at
+   `/server/voice` in BeamMP and `/game` in the voice service using shared SELinux
+   labeling (`:z`). Keep it outside the privately labeled game data volume so a
+   game restart cannot relabel and interrupt the running voice service. Do not
+   copy populated config or credentials into Git.
 4. Install the matching BeamMP client ZIP/plugin and companion release. Restart
    BeamMP to load the plugin.
 5. Open/forward **64738 TCP and UDP** to the voice host. The game continues using

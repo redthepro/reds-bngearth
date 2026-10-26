@@ -13,7 +13,7 @@ UserNS=keep-id
 User=1000
 Group=1000
 Volume=%h/beamng-earth-voice-data:/data:z
-Volume=%h/beamng-earth-server/data/voice:/game:z
+Volume=%h/beamng-earth-voice-registry:/game:z
 PublishPort=0.0.0.0:64738:64738/tcp
 PublishPort=0.0.0.0:64738:64738/udp
 ReadOnly=true
@@ -26,6 +26,7 @@ StopTimeout=15
 LogDriver=journald
 
 [Service]
+ExecCondition=/usr/bin/test -f %h/beamng-earth-voice-data/mumble.ini
 Restart=always
 RestartSec=5
 UMask=0077

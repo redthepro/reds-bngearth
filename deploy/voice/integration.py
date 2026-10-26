@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'server'))
 from voice_client import MumbleClient
 import earthvoice
 
-REMOTE = 'beamng-earth-server/data/voice/'
+REMOTE = 'beamng-earth-voice-registry/'
 
 
 def remote_read(name):
@@ -28,7 +28,7 @@ def main():
         raise SystemExit('Pass --isolated-registry only before enabling the live game plugin.')
     seed = '''import json,os,time
 from pathlib import Path
-p=Path.home()/'beamng-earth-server/data/voice/state.json'
+p=Path.home()/'beamng-earth-voice-registry/state.json'
 (p.parent/'test-active').touch()
 for _ in range(600):
  if not (p.parent/'test-active').exists(): break
