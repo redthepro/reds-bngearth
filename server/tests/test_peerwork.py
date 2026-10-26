@@ -156,13 +156,26 @@ class PoolTest(unittest.TestCase):
     def test_helper_used_then_local(self):
         helper, local = FakeHelper(), LocalPool()
         pool = peerwork.SharedFarPool(local, [("127.0.0.1", helper.port)], {"roads": True}, None)
-        for _ in range(100):
-            if pool.free.qsize() == 2:
-                break
-            threading.Event().wait(0.02)
+        # Await both advertised slots, rather than measuring thread startup speed.
+        slots = [pool.free.get(timeout=10) for _ in range(2)]
+        for slot in slots:
+            pool.free.put(slot)
         self.assertEqual(pool.remote_slots(), 2, "earthd keeps this many more far tiles in flight")
-        futs = [pool.submit(far_geometry, *self.args(i)) for i in range(4)]
-        out = [f.result(10) for f in futs]
+        # Hold both remote jobs until the burst is submitted. Without this gate a
+        # fast helper can return a slot before submission 3, correctly handling
+        # more than two jobs and making the old total-count assertion race.
+        release = threading.Event()
+        call = peerwork._Conn.call
+        def held_call(conn, *args, **kwargs):
+            if not release.wait(10):
+                raise TimeoutError("test did not release the remote jobs")
+            return call(conn, *args, **kwargs)
+        with mock.patch.object(peerwork._Conn, "call", held_call):
+            try:
+                futs = [pool.submit(far_geometry, *self.args(i)) for i in range(4)]
+            finally:
+                release.set()
+            out = [f.result(10) for f in futs]
         remote = [o for o in out if isinstance(o, farfield.Built)]
         self.assertEqual(len(remote), 2, "the helper's two slots")
         self.assertEqual(local.calls, 2, "the rest built here")
