@@ -22,7 +22,7 @@ import assetcatalog as ac
 import prepare_asset as prep
 import sketchfab_acquire as fetch
 
-PACKAGE = Path(__file__).resolve().parents[3]
+PACKAGE = Path(__file__).resolve().parents[2] / 'docs' / 'earth2'
 BUDGETS = json.loads((PACKAGE / 'config/05-asset-budgets.json').read_text(encoding='utf-8'))
 TEMPLATE = json.loads((PACKAGE / 'config/asset-manifest.example.json').read_text(encoding='utf-8'))
 UID = '0123456789abcdef0123456789abcdef'
