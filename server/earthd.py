@@ -73,12 +73,16 @@ import threading  # noqa: E402
 import time  # noqa: E402
 from collections import OrderedDict, deque  # noqa: E402
 import concurrent.futures  # noqa: E402
+import functools  # noqa: E402
 import multiprocessing  # noqa: E402
 from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 from dataclasses import dataclass, field, replace  # noqa: E402
+from pathlib import Path  # noqa: E402
+from contextvars import ContextVar  # noqa: E402
 
 import numpy as np  # noqa: E402
 import streaming  # noqa: E402
+import workcontrol  # noqa: E402
 import budget  # noqa: E402
 import voice as voicemod  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -516,7 +520,113 @@ def survey_q(frame, dem, block_m=BLOCK_SURVEY_M):
     return heightmap.choose_q(float((win.max(axis=(2, 3)) - win.min(axis=(2, 3))).max()))
 
 
+_work_lease = ContextVar("earth_work_lease", default=None)
+_photo_init_lock = threading.RLock()
+
+
+def _checkpoint():
+    lease = _work_lease.get()
+    if lease is not None:
+        lease.checkpoint()
+
+
+def _plan_job(function):
+    """Keep retired-anchor cleanup away from active generation writers."""
+    @functools.wraps(function)
+    def run(self, anchor_or_id, *args, **kwargs):
+        import worldplan
+        if not worldplan.generation_enabled():
+            return function(self, anchor_or_id, *args, **kwargs)
+        aid = getattr(anchor_or_id, "id", anchor_or_id)
+        with self._plan_activity_lock:
+            self._plan_active[aid] = self._plan_active.get(aid, 0) + 1
+        try:
+            return function(self, anchor_or_id, *args, **kwargs)
+        finally:
+            with self._plan_activity_lock:
+                count = self._plan_active[aid] - 1
+                if count:
+                    self._plan_active[aid] = count
+                else:
+                    self._plan_active.pop(aid, None)
+    return run
+
+
 class Server(SharingServerMixin):
+    def input_receipt(self):
+        """Local input invalidation stamp, not a provider-complete world identity."""
+        import worldplan
+        return worldplan.runtime_receipt(getattr(self, "dem", None), getattr(self, "mapdata", None))
+
+    def _submit_raw_work(self, pool, lease, function, *args):
+        """Keep a reservation until the real callable stops, despite asyncio cancellation."""
+        def run():
+            token = _work_lease.set(lease)
+            try:
+                lease.checkpoint()
+                result = function(*args)
+                lease.checkpoint()
+                return result
+            finally:
+                _work_lease.reset(token)
+                lease.finish()
+        try:
+            raw = pool.submit(run)
+        except BaseException:
+            lease.finish()
+            raise
+        raw.add_done_callback(lambda _: lease.finish())  # also covers cancelled queued calls
+        return raw
+
+    def _submit_work(self, pool, lease, function, *args):
+        return asyncio.wrap_future(self._submit_raw_work(pool, lease, function, *args))
+
+    def photo_submit(self, urgent, key, function, *args):
+        """Bound detached photo work independently; rejection must never hold collision."""
+        kind = "urgent" if urgent else "optional"
+        with _photo_init_lock:
+            if not hasattr(self, "photo_budgets"):
+                self.photo_budgets = {name: workcontrol.Budget(critical_jobs=2, critical_bytes=64 << 20)
+                                      for name in ("urgent", "optional")}
+                self.photo_inflight = {}
+            token = (kind, key)
+            old = self.photo_inflight.get(token)
+            if old is not None and not old.done():
+                return old
+            lease = self.photo_budgets[kind].try_acquire(token, "critical", 32 << 20)
+            if lease is None:
+                return None
+            pool = self.urgent_base_pool if urgent else self.base_pool
+            raw = self._submit_raw_work(pool, lease, function, *args)
+            self.photo_inflight[token] = raw
+            def done(future):
+                with _photo_init_lock:
+                    if self.photo_inflight.get(token) is future:
+                        self.photo_inflight.pop(token, None)
+            raw.add_done_callback(done)
+            return raw
+
+    def _admission(self):
+        if not hasattr(self, "work_budget"):
+            self.work_budget = workcontrol.Budget()
+        return self.work_budget
+
+    def cancel_unwanted_tiles(self):
+        for ck, lease in getattr(self, "tile_leases", {}).items():
+            if not any(c.active == ck[0] and ck[1] in c.desired for c in getattr(self, "connections", ())):
+                lease.cancel()
+
+    def support_submit(self, pool, kind, function, *args):
+        """Independent bounded road/nav queues cannot occupy terrain reservations."""
+        budgets = getattr(self, "support_budgets", None)
+        if budgets is None:
+            self.support_budgets = budgets = {
+                "roads": workcontrol.Budget(critical_jobs=4, critical_bytes=64 << 20),
+                "nav": workcontrol.Budget(critical_jobs=2, critical_bytes=32 << 20)}
+        key = (kind, args)
+        lease = budgets[kind].try_acquire(key, "critical", 16 << 20)
+        return None if lease is None else self._submit_work(pool, lease, function, *args)
+
     def __init__(self, user_dir, cache_dir, tile_workers=3, kfun=None,
                  hysteresis=farfield.HYSTERESIS, radius=farfield.RADIUS, far_format="cdae",
                  imagery=imagerymod.DEFAULT_CHAIN, near_visual="mesh", tex_near=TEX_NEAR, tex_far=TEX_FAR,
@@ -701,6 +811,8 @@ class Server(SharingServerMixin):
         # Far tiles: (anchorId, key) -> TileInfo, LRU order; files are far_<anchorId>_<key>.<fmt>.
         self.tiles = OrderedDict()
         self.tile_inflight = {}
+        self.work_budget = workcontrol.Budget()
+        self.tile_leases = {}
         self.build_stats = deque(maxlen=500)   # seconds per built tile, for the log
         self.level_stats = {}                  # level -> deque of (build s, texture s, shape B, texture B)
         self.prune_delay = PRUNE_DELAY
@@ -729,6 +841,12 @@ class Server(SharingServerMixin):
             roadwidthmod.store_dir(cache_dir, mapdata)).get
             if road_widths and mapdata is not None else None)
         self.grader_lock = threading.Lock()
+        import worldplan
+        self._plan_generations = worldplan.GenerationStore(limit=2)
+        self._plan_requests = {}
+        self._plan_active = {}
+        self._plan_activity_lock = threading.Lock()
+        self._plan_generation_anchors = set()
         # The download cache's bookkeeping (cache.py): every producer reports its disk hits and writes
         self.cache = cache
         if cache is not None:
@@ -877,6 +995,7 @@ class Server(SharingServerMixin):
 
     def anchor_q(self, anchor):
         """The anchor's height quantum, surveyed once (worker threads)."""
+        anchor = getattr(anchor, "_world_source_anchor", anchor)
         with anchor.q_lock:
             if anchor.q is None:
                 anchor.q = survey_q(anchor.frame, self.dem, self.layout.block * heightmap.SQUARE)
@@ -940,14 +1059,49 @@ class Server(SharingServerMixin):
         loop.call_later(due[0] - loop.time(), step)
 
     # --- heightmaps ------------------------------------------------------
-    def hm_name(self, key):
-        aid, cx, cy = key
-        return f"hm_{aid}_{int(cx)}_{int(cy)}.png"
+    def _plan_anchor(self, anchor):
+        """Bind a whole immutable generation once per geometric job.
 
-    def ter_name(self, key):
+        Existing wire anchor IDs stay unchanged. In-flight holders retain their
+        old Grader/chunks/bridge/tunnel objects; they never reset a live bundle.
+        """
+        import worldplan
+        if anchor is None or not worldplan.generation_enabled() or getattr(anchor, "_world_bound", False):
+            return anchor
+        receipt = worldplan.runtime_receipt(self.dem, self.mapdata, worldplan.geometry_settings(
+            {"grading": self.grading, "road_widths": self.road_widths is not None,
+             "surface": self.surface is not None, "sea": self.sea is not None,
+             "airports": self.airports is not None, "roads_in_ground": roadsmod.ROADS_IN_GROUND}))
+        def factory(serial):
+            bound = replace(anchor, grader=None, chunks=heightmap.ChunkCache(), bridges=None, tunnels=None)
+            bound._world_bound, bound._world_generation = True, serial
+            bound._world_receipt = receipt
+            bound._world_source_anchor = anchor
+            return bound
+        bound = self._plan_generations.acquire((anchor.id, anchor.lat, anchor.lon, anchor.frame.h0), receipt, factory)
+        with self._plan_activity_lock:
+            self._plan_generation_anchors.add(anchor.id)
+        return bound
+
+    def _plan_output(self, anchor):
+        generation = getattr(anchor, "_world_generation", None)
+        if generation is None:
+            return self.out_dir, self.vfs_dir
+        relative = f"world_{anchor.id}_g{generation}"
+        out = os.path.join(self.out_dir, relative)
+        os.makedirs(out, exist_ok=True)
+        return out, self.vfs_dir + "/" + relative
+
+    def hm_name(self, key, anchor=None):
+        aid, cx, cy = key
+        generation = getattr(anchor, "_world_generation", None)
+        suffix = "" if generation is None else f"_g{generation}"
+        return f"hm_{aid}_{int(cx)}_{int(cy)}{suffix}.png"
+
+    def ter_name(self, key, anchor=None):
         """A new .ter name for every build of key: the engine skips a terrainFile it already has, and a
         rebuilt block (an evicted one, or one with more of its land cover) can differ."""
-        return f"{self.hm_name(key)[:-4]}_{next(self.ter_serial)}.ter"
+        return f"{self.hm_name(key, anchor)[:-4]}_{next(self.ter_serial)}.ter"
 
     def hm_vfs(self, key):
         return f"{self.vfs_dir}/{self.hm_name(key)}"
@@ -987,23 +1141,25 @@ class Server(SharingServerMixin):
             anchor._mph = v
         return v
 
+    @_plan_job
     def build_navgraph(self, aid, x, y, serial):
         """navgraph.py: the AI road graph around (x, y) of anchor aid, written to the session folder (the
         anchor's earlier graphs deleted): (vfs path, nodes, edges) or None. Worker threads."""
-        anchor = self.anchors.get(aid)
+        anchor = self._plan_anchor(self.anchors.get(aid))
         if anchor is None or self.mapdata is None:
             return None
+        out_dir, vfs_dir = self._plan_output(anchor)
         if self.road_pool is not None:      # in a road process, with its bridges (blockworker.navgraph)
             t0 = time.perf_counter()
             cla, clo, _ = anchor.frame.enu_to_geodetic(x, y, 0.0)
             rules = navgraphmod.road_rules(navgraphmod.country_near(self.airports_db, float(cla), float(clo)))
             path, n_nodes, n_edges = self.road_pool.submit(
-                blockworker.navgraph, aid, anchor.lat, anchor.lon, anchor.zooms[0], x, y, self.out_dir,
-                self.vfs_dir, serial, self.left_hand(anchor), self.mph(anchor), rules).result()
+                blockworker.navgraph, aid, anchor.lat, anchor.lon, anchor.zooms[0], x, y, out_dir,
+                vfs_dir, serial, self.left_hand(anchor), self.mph(anchor), rules).result()
             log.debug("navgraph %d of anchor %d: %d nodes in %.2f s (queue + build)", serial, aid, n_nodes,
                      time.perf_counter() - t0)
-            keep = os.path.join(self.out_dir, os.path.basename(path))
-            for old in glob.glob(os.path.join(self.out_dir, f"navgraph_{aid}_*.json")):    # one file at a time
+            keep = os.path.join(out_dir, os.path.basename(path))
+            for old in glob.glob(os.path.join(out_dir, f"navgraph_{aid}_*.json")):
                 if old != keep:
                     try:
                         os.remove(old)
@@ -1037,15 +1193,17 @@ class Server(SharingServerMixin):
         except Exception as e:          # no decks: the graph follows the ground under bridges
             log.debug("navgraph decks: %s: %s", type(e).__name__, e)
         graph = navgraphmod.build(anchor.frame, feats, elev, (x, y), urban, decks=decks, widths=self.road_widths,
-                                  left_hand=self.left_hand(anchor), mph=self.mph(anchor))
+                                  left_hand=self.left_hand(anchor), mph=self.mph(anchor),
+                                  require_bridge_support=True)
+        graph["bridgeSupportKnown"] = True
         cla, clo, _ = anchor.frame.enu_to_geodetic(x, y, 0.0)
         graph["rules"] = navgraphmod.road_rules(navgraphmod.country_near(self.airports_db, float(cla), float(clo)))
-        for old in glob.glob(os.path.join(self.out_dir, f"navgraph_{aid}_*.json")):    # one file at a time
+        for old in glob.glob(os.path.join(out_dir, f"navgraph_{aid}_*.json")):
             try:
                 os.remove(old)
             except OSError:
                 pass
-        path = navgraphmod.write(self.out_dir, self.vfs_dir, aid, serial, graph)
+        path = navgraphmod.write(out_dir, vfs_dir, aid, serial, graph)
         log.debug("navgraph %d of anchor %d: %d nodes in %.2f s", serial, aid, len(graph["nodes"]),
                  time.perf_counter() - t0)
         return path, len(graph["nodes"]), len(graph["edges"])
@@ -1090,15 +1248,17 @@ class Server(SharingServerMixin):
                                      lambda la, lo: self.ground(anchor.frame, la, lo, self.dem.sample(la, lo, zoom)),
                                      self.out_dir, self.vfs_dir, aid)
 
+    @_plan_job
     def build_terrain_patch(self, aid, key, box):
         """terrainpatch.py: the collision patch of the ground under a collision island off the terrain block (the
         mod's terrainpatch.lua), written to the session folder in pieces. ([(vfs path, (cx, cy))], triangles) or None
         if the anchor is gone. Worker threads."""
-        anchor = self.anchors.get(aid)
+        anchor = self._plan_anchor(self.anchors.get(aid))
         if anchor is None:
             return None
         box = terrainpatchmod.snap_box(*box)
-        path = os.path.join(self.out_dir, f"patch_{aid}")      # (+ _<cell>.cdae a piece: shared by patches)
+        out_dir, vfs_dir = self._plan_output(anchor)
+        path = os.path.join(out_dir, f"patch_{aid}")
         if self.road_pool is not None:
             parts, n = self.road_pool.submit(blockworker.terrain_patch, aid, anchor.lat, anchor.lon,
                                              anchor.zooms[0], box, path).result()
@@ -1109,19 +1269,21 @@ class Server(SharingServerMixin):
                 z = self.ground(anchor.frame, la, lo, self.dem.sample(la, lo, zoom))
                 return g.apply(la, lo, z, gradingmod.ROAD_LIFT) if g is not None else z
             parts, n = terrainpatchmod.build(anchor.frame, elev, box, path)
-        return [(f"{self.vfs_dir}/{os.path.basename(p)}", c) for p, c in parts], n
+        return [(f"{vfs_dir}/{os.path.basename(p)}", c) for p, c in parts], n
 
+    @_plan_job
     def build_roads_tile(self, aid, tx, ty):
         """roads.py: one road tile of anchor aid, written to the session folder. Returns (vfs path,
         chunks) or None if the anchor is gone. Worker threads (fetches the map cells it lacks)."""
-        anchor = self.anchors.get(aid)
+        anchor = self._plan_anchor(self.anchors.get(aid))
         if anchor is None or self.mapdata is None:
             return None
+        out_dir, vfs_dir = self._plan_output(anchor)
         if self.road_pool is not None:
             t0 = time.perf_counter()
             res = self.road_pool.submit(
-                blockworker.roads_tile, aid, anchor.lat, anchor.lon, anchor.zooms[0], tx, ty, self.out_dir,
-                self.vfs_dir, self.sidewalks, DETAIL_ROAD_LIFT if self.near_visual == "detail" else 0.0,
+                blockworker.roads_tile, aid, anchor.lat, anchor.lon, anchor.zooms[0], tx, ty, out_dir,
+                vfs_dir, self.sidewalks, DETAIL_ROAD_LIFT if self.near_visual == "detail" else 0.0,
                 self.buildings, self.left_hand(anchor), self.mph(anchor), self.anchor_q(anchor)).result()
             log.debug("road tile %d_%d: %.2f s (queue + build)", tx, ty, time.perf_counter() - t0)
             return res
@@ -1202,7 +1364,7 @@ class Server(SharingServerMixin):
             bld = buildingsmod.road_tile(anchor.frame, tx, ty, self.mapdata,
                                          lambda la, lo: self.ground(anchor.frame, la, lo, self.dem.sample(la, lo, zoom)),
                                          None, None, items)
-        return roadsmod.write_tile(self.out_dir, self.vfs_dir, aid, tx, ty, chunks, walks if self.sidewalks else None,
+        return roadsmod.write_tile(out_dir, vfs_dir, aid, tx, ty, chunks, walks if self.sidewalks else None,
                                    mesh, dmesh, bld, props, wires, park, tunnel_mesh=tmesh)
 
     def ground_z_at(self, anchor, e, n):
@@ -1223,6 +1385,7 @@ class Server(SharingServerMixin):
 
     def grader_for(self, anchor):
         """The anchor's grading.Grader (--grading on), else None."""
+        anchor = self._plan_anchor(anchor)
         if not self.grading:
             return None
         with self.grader_lock:
@@ -1232,13 +1395,14 @@ class Server(SharingServerMixin):
                                                   self.road_widths)
                 anchor.grader.wet = self.sea.depth if self.sea is not None else None    # (no dams: underwater tunnels)
                 anchor.grader.dem = self.dem                # (its urgent lane: _plan_missing)
-                anchor.grader.shared = plancachemod.for_grader(self.cache_dir, anchor.grader, self.road_widths,
-                                                              anchor.grader.wet)
+                anchor.grader.shared = (None if getattr(anchor, "_world_bound", False) else
+                    plancachemod.for_grader(self.cache_dir, anchor.grader, self.road_widths, anchor.grader.wet))
             return anchor.grader
 
     def warm_roads(self, anchor, x, y, vx, vy):
         """Queue the road plans of the cells the physics block will cover along the player's straight path
         (WARM_STEPS_S; the block's half width + the grading pad), then those within WARM_AROUND."""
+        anchor = self._plan_anchor(anchor)
         g = self.grader_for(anchor)
         if g is None:
             return
@@ -1342,10 +1506,14 @@ class Server(SharingServerMixin):
                 with self.warm_cv:      # not again for this pose list
                     self.warm_want = [w for w in self.warm_want if w[1] != job[1]]
 
-    def make_heightmap(self, anchor, cx, cy, progress, lane=LANE_REQUEST, queued_at=None):
+    @_plan_job
+    def make_heightmap(self, anchor, cx, cy, progress, lane=LANE_REQUEST, queued_at=None, checkpoint=None):
         """Worker thread: build and write one 1024² terrain. The follow / prefetch blocks (no progress
         callback) build in the block process when there is one; the anchor's first block here, so its
         DEM download reports progress."""
+        anchor = self._plan_anchor(anchor)
+        if checkpoint is not None:
+            checkpoint()
         t0 = time.perf_counter()
         if queued_at is not None and t0 - queued_at > 0.2:
             log.debug("terrain %s waited %.2f s for a heightmap worker", (anchor.id, cx, cy), t0 - queued_at)
@@ -1354,33 +1522,37 @@ class Server(SharingServerMixin):
         if fb is not None and fb[0] == (cx, cy):        # the provisional first block's photo (make_provisional)
             anchor.first_base, base = None, fb[1]
         elif self.near_visual == "detail" and self.imagery is not None:
-            base = (self.urgent_base_pool if lane == LANE_REQUEST else self.base_pool).submit(
-                self._base_photo, anchor, cx, cy, self._base_process(lane), lane == LANE_REQUEST)
+            base = self.photo_submit(lane == LANE_REQUEST, (anchor.id, cx, cy), self._base_photo,
+                                     anchor, cx, cy, self._base_process(lane), lane == LANE_REQUEST)
         pool = self.block_pools[lane][0] if self.block_pools and progress is None else None
         if pool is not None:
             info = pool.submit(
                 blockworker.build, anchor.id, anchor.lat, anchor.lon, anchor.hm_zoom, q, cx, cy,
-                self.layout.block, self.out_dir, self.hm_name((anchor.id, cx, cy)),
-                self.ter_name((anchor.id, cx, cy))).result()
+                self.layout.block, self.out_dir, self.hm_name((anchor.id, cx, cy), anchor),
+                self.ter_name((anchor.id, cx, cy), anchor)).result()
+            if checkpoint is not None:
+                checkpoint()
             return self._finish_heightmap(anchor, cx, cy, info, t0, base)
         urgent = getattr(self.dem, "urgent", None)     # (test DEMs have no lane)
         with urgent() if urgent is not None else contextlib.nullcontext():     # the player waits for it (teleport,
             # resync): ahead of every other download
-            return self._make_heightmap_here(anchor, cx, cy, progress, t0, q, base)
+            return self._make_heightmap_here(anchor, cx, cy, progress, t0, q, base, checkpoint=checkpoint)
 
+    @_plan_job
     def make_provisional(self, anchor, cx, cy, progress):
         """Worker thread: a teleport's first block before its road plans (the user, 2026-10-22: "place the car as
         soon as possible"): the DEM's ground with the runways (no road grading, tunnels, arches or sea floor, which
         all wait on the map data of the cells around: 15-60 s of a fresh place's first block, ~5 s without), the
         cached land cover and the photo. The graded block replaces it when it is built (Connection.refine_first:
         terrain_refresh). Not kept in hm (the graded one is the block of its key), nor in anchor.chunks."""
+        anchor = self._plan_anchor(anchor)
         t0 = time.perf_counter()
         q = self.anchor_q(anchor)
         base = None
         if self.near_visual == "detail" and self.imagery is not None:
             # (here, not in a block process: the other lane's process can still be busy with the old place's block,
             # and the photo waited 16 s behind it on a Deck, 2026-10-23)
-            base = self.urgent_base_pool.submit(self._base_photo, anchor, cx, cy, None, True, True)
+            base = self.photo_submit(True, (anchor.id, cx, cy), self._base_photo, anchor, cx, cy, None, True, True)
             anchor.first_base = ((cx, cy), base)
         urgent = getattr(self.dem, "urgent", None)     # (test DEMs have no lane)
         with urgent() if urgent is not None else contextlib.nullcontext():
@@ -1389,16 +1561,46 @@ class Server(SharingServerMixin):
                  " ".join(f"{k} {v:.2f}" for k, v in info.get("stages", {}).items()))
         return info
 
-    def _make_heightmap_here(self, anchor, cx, cy, progress, t0, q, base=None, provisional=False):
+    def _make_heightmap_here(self, anchor, cx, cy, progress, t0, q, base=None, provisional=False, checkpoint=None):
         with self.hm_here_lock:
             self.hm_here += 1
         try:
-            return self._make_heightmap_here_(anchor, cx, cy, progress, t0, q, base, provisional)
+            return self._make_heightmap_here_(anchor, cx, cy, progress, t0, q, base, provisional, checkpoint)
         finally:
             with self.hm_here_lock:
                 self.hm_here -= 1
 
-    def _make_heightmap_here_(self, anchor, cx, cy, progress, t0, q, base=None, provisional=False):
+    def _make_heightmap_here_(self, anchor, cx, cy, progress, t0, q, base=None, provisional=False, checkpoint=None):
+        anchor = self._plan_anchor(anchor)
+        checkpoint = checkpoint or _checkpoint
+        import terrainprep
+        if not terrainprep.shared_enabled():
+            return self._make_heightmap_legacy(anchor, cx, cy, progress, t0, q, base, provisional)
+        g = None if provisional else self.grader_for(anchor)
+        arch = None
+        if self.mapdata is not None and not provisional:
+            def arch(elev):
+                tunnels = self.tunnels_of(anchor, elev, g)
+                half = self.layout.block * heightmap.SQUARE / 2
+                cell_fn = lambda key: self.mapdata.cell(key, layers=("roads",), kind="demand").layers.get("roads")
+                return lambda la, lo: roadsmod.block_arch_raise(tunnels, cell_fn, anchor.frame, la, lo, elev(la, lo),
+                                                               (cx - half, cy - half, cx + half, cy + half))
+        import worldplan
+        info = terrainprep.prepare(anchor.frame, cx, cy, self.layout.block, q, self.out_dir,
+            self.hm_name((anchor.id, cx, cy), anchor), self.ter_name((anchor.id, cx, cy), anchor),
+            sample=lambda la, lo: self.dem.sample(la, lo, anchor.hm_zoom, progress),
+            ground=lambda la, lo, z: self.ground(anchor.frame, la, lo, z),
+            provisional_ground=(lambda la, lo, z: self.airports.apply(la, lo, z)) if self.airports is not None else None,
+            grader=g, surface=self.surface, widths=self.road_widths, sea=self.sea, arch=arch,
+            holes=lambda elev, keep, idx, data: self._tunnel_holes(anchor, elev, keep, cx, cy, idx, data),
+            open_tunnels=lambda keep: blockworker._open_tunnels(g, keep), chunks=anchor.chunks,
+            provisional=provisional, t0=t0, cpu_stages=True, cache_dir=self.cache_dir,
+            plan_context=lambda keys: worldplan.capture_context(g, self.mapdata, keys), settings={"dem_zoom": anchor.hm_zoom},
+            cache_kind="urgent" if progress is not None else "demand", checkpoint=checkpoint)
+        return self._finish_heightmap(anchor, cx, cy, info, t0, base,
+                                      defer_base=progress is None and not provisional)
+
+    def _make_heightmap_legacy(self, anchor, cx, cy, progress, t0, q, base=None, provisional=False):
         keep = {}
         g = None if provisional else self.grader_for(anchor)
         c0 = time.thread_time()
@@ -1478,6 +1680,7 @@ class Server(SharingServerMixin):
     def tunnel_floor(self, anchor):
         """The floor of a tunnel tube at the anchor's origin (roads.tunnel_floor_at), or None: a teleport into a park
         arch set the car down on the soil over it, where it hung on the arch's top (2026-10-17)."""
+        anchor = self._plan_anchor(anchor)
         if self.mapdata is None:
             return None
         g = self.grader_for(anchor)
@@ -1582,6 +1785,12 @@ class Server(SharingServerMixin):
     def _finish_heightmap(self, anchor, cx, cy, info, t0, base=None, defer_base=True):
         """The base photo (detail mode; rendered here: the imagery corrections live in this process; base: its
         future from _base_photo, started with the heights), the timings."""
+        if info.get("_worker_epoch_changed") and hasattr(self.dem, "invalidate_snapshot"):
+            self.dem.invalidate_snapshot()
+        if getattr(anchor, "_world_bound", False):
+            info["_heightmap_name"] = self.hm_name((anchor.id, cx, cy), anchor)
+            info["_world_generation"] = anchor._world_generation
+            info["_world_receipt"] = anchor._world_receipt
         if base is not None:
             t1 = time.perf_counter()
             if defer_base and not base.done():
@@ -1596,7 +1805,11 @@ class Server(SharingServerMixin):
                 info["seconds"] = time.perf_counter() - t0
                 info["zoom"] = anchor.hm_zoom
                 return info
-            info["base"], photo, info["stages"]["baseRender"] = base.result()
+            try:
+                info["base"], photo, info["stages"]["baseRender"] = base.result()
+            except Exception as e:
+                log.debug("base photo unavailable; collision remains usable: %s", e)
+                info["base"], photo, info["stages"]["baseRender"] = None, [], 0
             info["stages"]["baseWait"] = time.perf_counter() - t1
             if photo and info.get("layers") and info.get("ter"):
                 try:                # lawns only where the photo is green (before the game reads the block)
@@ -1735,33 +1948,100 @@ class Server(SharingServerMixin):
         return all(self._region_status(rk) is not None for rk in self.base_pending.get((anchor.id, cx, cy), ()))
 
     def terrain_cached(self, key):
+        import worldplan
+        if worldplan.generation_enabled():
+            anchor = self._plan_anchor(self.anchors.get(key[0]))
+            if anchor is None:
+                return False
+            generation = anchor._world_generation
+            return ((key in self.hm and self.hm[key].get("_world_generation") == generation) or
+                    (key in self.hm_inflight and getattr(self.hm_inflight[key], "_world_generation", None) == generation))
         return key in self.hm or key in self.hm_inflight
 
-    async def terrain(self, anchor, cx, cy, progress=None, lane=LANE_REQUEST):
+    async def terrain(self, anchor, cx, cy, progress=None, lane=LANE_REQUEST, _attempt=0):
         """Info of the (anchorId, cx, cy) terrain, generating it once (deduplicated). lane: the block
         process that builds it (LANE_PREFETCH for the prefetch)."""
+        source_anchor = getattr(anchor, "_world_source_anchor", anchor)
+        anchor = self._plan_anchor(source_anchor)
+        generation = getattr(anchor, "_world_generation", None)
         key = (anchor.id, cx, cy)
-        if key in self.hm:
+        self._plan_requests[key] = generation
+        if (key in self.hm and self.hm[key].get("_world_generation") == generation
+                and self.hm[key].get("_input_receipt", self.input_receipt()) == self.input_receipt()):
             self.hm.move_to_end(key)
             return self.hm[key]
         fut = self.hm_inflight.get(key)
+        if fut is not None and getattr(fut, "_world_generation", None) != generation:
+            fut = None
+        if fut is not None and getattr(getattr(fut, "_lease", None), "cancelled", False):
+            fut = None
         if fut is None:
             loop = asyncio.get_running_loop()
-            fut = self.hm_inflight[key] = loop.run_in_executor(
-                self.hm_pool, self.make_heightmap, anchor, cx, cy, progress, lane, time.perf_counter())
+            if lane == LANE_PREFETCH:
+                if not hasattr(self, "prefetch_budget"):
+                    self.prefetch_budget = workcontrol.Budget(critical_jobs=1, critical_bytes=streaming.CRITICAL_BYTES)
+                admission = self.prefetch_budget
+            else:
+                admission = self._admission()
+            lease = admission.try_acquire(("terrain", key, generation), "critical", streaming.CRITICAL_BYTES)
+            if lease is None:
+                raise RuntimeError("terrain admission busy; retry")
+            receipt = self.input_receipt()
+            fut = self.hm_inflight[key] = self._submit_work(
+                self.hm_pool, lease, self.make_heightmap, anchor, cx, cy, progress, lane, time.perf_counter())
+            fut._world_generation = generation
+            fut._lease = lease
+            fut._input_receipt = receipt
+            fut._world_receipt = getattr(anchor, "_world_receipt", None)
             fut.add_done_callback(lambda f: self._hm_done(key, f))
-        return await asyncio.shield(fut)
+        fut._consumers = getattr(fut, "_consumers", 0) + 1
+        try:
+            info = await asyncio.shield(fut)
+        except asyncio.CancelledError:
+            if fut._consumers == 1 and hasattr(fut, "_lease"):
+                fut._lease.cancel()
+            raise
+        finally:
+            fut._consumers -= 1
+        if getattr(fut, "_input_receipt", None) != self.input_receipt() or info.get("_worker_epoch_changed"):
+            if _attempt >= 2:
+                raise RuntimeError("terrain inputs changed repeatedly; retry")
+            return await self.terrain(source_anchor, cx, cy, progress, lane, _attempt + 1)
+        latest = self._plan_anchor(source_anchor)
+        if (self._plan_requests.get(key, generation) != generation
+                or getattr(latest, "_world_generation", None) != generation
+                or getattr(latest, "_world_receipt", None) != getattr(anchor, "_world_receipt", None)):
+            if _attempt >= 2:
+                raise RuntimeError("terrain generation changed repeatedly; retry")
+            return await self.terrain(source_anchor, cx, cy, progress, lane, _attempt + 1)
+        return info
 
     def _hm_done(self, key, fut):
+        if self.hm_inflight.get(key) is not fut:
+            return  # A newer generation already owns this request key.
         self.hm_inflight.pop(key, None)
         if fut.cancelled() or fut.exception() is not None:
             return
         info = fut.result()
+        if (getattr(fut, "_input_receipt", self.input_receipt()) != self.input_receipt()
+                or info.get("_worker_epoch_changed")):
+            return
+        info["_input_receipt"] = getattr(fut, "_input_receipt", self.input_receipt())
+        generation = getattr(fut, "_world_generation", None)
+        if generation is not None:
+            anchor = self._plan_anchor(self.anchors.get(key[0]))
+            if anchor is None or anchor._world_generation != generation:
+                if self._plan_requests.get(key) == generation:
+                    self._plan_requests.pop(key, None)
+                return  # Provisional/obsolete work is useful to its holder, not the current cache.
         log.info("terrain %s z%d in %.2f s (%s): zBase %.0f maxHeight %.0f (Q 1/%d)", key, info["zoom"],
                  info["seconds"], " ".join(f"{k} {v:.2f}" for k, v in info.get("stages", {}).items()),
                  info["zBase"], info["maxHeight"], round(1 / info["q"]))
         self.hm[key] = info
         self.evict_heightmaps(fresh=key)
+        for obsolete in list(self._plan_requests):
+            if obsolete not in self.hm and obsolete not in self.hm_inflight:
+                self._plan_requests.pop(obsolete, None)
 
     def evict_heightmaps(self, fresh=None):
         """Keep at most HM_CACHE entries, never deleting the current terrain, the
@@ -1781,7 +2061,7 @@ class Server(SharingServerMixin):
                  if a.first_terrain is not None and (newest is None or aid > newest)}
         for key in [k for k in self.hm if k not in keep][:max(0, len(self.hm) - HM_CACHE)]:
             info = self.hm.pop(key)
-            self._remove(os.path.join(self.out_dir, self.hm_name(key)))
+            self._remove(os.path.join(self.out_dir, info.get("_heightmap_name", self.hm_name(key))))
             self._remove(os.path.join(self.out_dir, self.base_name(key)))
             self.base_stale.discard(key)
             self.base_pending.pop(key, None)
@@ -1794,7 +2074,7 @@ class Server(SharingServerMixin):
                     self._remove(os.path.join(terraincache.cache_dir(self.user_dir),
                                               terraincache.base_key(f"{self.vfs_dir}/{name}", BASE_AO_VFS) + ".dds"))
             if self.surface is not None:        # its surface masks (only read at import)
-                for name in surfacemod.mask_names(self.hm_name(key)[:-4]):
+                for name in info.get("layers") or surfacemod.mask_names(self.hm_name(key)[:-4]):
                     self._remove(os.path.join(self.out_dir, name))
 
     # --- far tiles -------------------------------------------------------
@@ -1927,9 +2207,12 @@ class Server(SharingServerMixin):
             px = self.tex_size(tile.level)
             self.imagery.prefetch(anchor.frame, *imagerymod.gutter_square(x0, y0, tile.size, px), px, soon=True)
 
+    @_plan_job
     def make_tile(self, anchor, tile, prev=None):
         """Worker thread: build and write one far tile (and its texture). Returns its TileInfo.
         prev: the tile's stale TileInfo (--colormatch): only its texture is rendered again."""
+        anchor = self._plan_anchor(anchor)
+        _checkpoint()
         if prev is not None:
             return self.retexture(anchor, tile, prev)
         t0 = time.perf_counter()
@@ -1974,6 +2257,7 @@ class Server(SharingServerMixin):
             built = farfield.build_tile(anchor.frame, src, tile, anchor.zooms[max(lvl, 0)], q,
                                         ref_zoom, with_sink=self.near_visual in BLOCK_DRAWN, layout=self.layout)
         t1 = time.perf_counter()
+        _checkpoint()
         material = texture = used = None
         tex_bytes = 0
         ck = (anchor.id, tile.key)
@@ -2006,6 +2290,7 @@ class Server(SharingServerMixin):
                     log.warning("tile %s of anchor %d: no imagery (%s), palette material (%d tiles so far)",
                                 tile.key, anchor.id, e, self.imagery_failures)
         t2 = time.perf_counter()
+        _checkpoint()
         size = farfield.write_built(path, built, self.far_format, material or farfield.MATERIAL,
                                     textured=material is not None, tex_px=self.tex_size(lvl))
         dt = time.perf_counter() - t0
@@ -2107,16 +2392,28 @@ class Server(SharingServerMixin):
         prev = None
         if ck in self.tiles:
             self.tiles.move_to_end(ck)
-            if not self.tiles[ck].stale:
+            if (not self.tiles[ck].stale
+                    and getattr(self.tiles[ck], "_input_receipt", self.input_receipt()) == self.input_receipt()):
                 f = loop.create_future()
                 f.set_result(self.tiles[ck])
                 return f
-            prev = self.tiles[ck]           # --colormatch: its texture is rendered again
+            if getattr(self.tiles[ck], "_input_receipt", self.input_receipt()) == self.input_receipt():
+                prev = self.tiles[ck]       # only cosmetic changes may reuse the geometry
         fut = self.tile_inflight.get(ck)
         if fut is None:
-            fut = self.tile_inflight[ck] = loop.run_in_executor(self.tile_pool, self.make_tile, anchor, tile, prev)
+            lease = self._admission().try_acquire(("tile", ck), "visual", streaming.JOB_BYTES)
+            if lease is None:
+                return None
+            if not hasattr(self, "tile_leases"):
+                self.tile_leases = {}
+            self.tile_leases[ck] = lease
+            receipt = self.input_receipt()
+            fut = self.tile_inflight[ck] = self._submit_work(self.tile_pool, lease, self.make_tile, anchor, tile, prev)
+            fut._input_receipt = receipt
             fut.add_done_callback(lambda f: self._tile_done(ck, f))
-        return fut
+        consumer = asyncio.shield(fut)  # a single consumer cannot cancel other consumers' work
+        consumer._input_receipt = getattr(fut, "_input_receipt", self.input_receipt())
+        return consumer
 
     def in_use(self):
         """(anchorId, key) of every tile a connection shows or holds, or let go of less than
@@ -2167,9 +2464,18 @@ class Server(SharingServerMixin):
         return out
 
     def _tile_done(self, ck, fut):
+        if self.tile_inflight.get(ck) is not fut:
+            return
         self.tile_inflight.pop(ck, None)
+        getattr(self, "tile_leases", {}).pop(ck, None)
         if fut.cancelled() or fut.exception() is not None:
             return
+        if getattr(fut, "_input_receipt", self.input_receipt()) != self.input_receipt():
+            return
+        result = fut.result()
+        if streaming.payload_cost(result, self.tex_size(farfield.tile_of(ck[1]).level)) > streaming.JOB_BYTES:
+            return  # do not publish an oversized completed artifact
+        result._input_receipt = getattr(fut, "_input_receipt", self.input_receipt())
         before = self.tiles.get(ck)
         info = self.tiles[ck] = fut.result()
         if before is not None and info.texture != before.texture:
@@ -2405,12 +2711,26 @@ class Server(SharingServerMixin):
                 return
             self._prune_scheduled.discard(keep_from)
             self.prune(keep_from)
+            if any(a < keep_from for a in self.anchors):
+                loop.call_later(self.prune_recheck, run)  # an in-flight generation still owns its files
         loop.call_later(self.prune_delay, run)
 
     def prune(self, keep_from):
         """Forget anchors older than keep_from and delete their files."""
+        held = self.held_anchors()
         for aid in [a for a in self.anchors if a < keep_from]:
+            with self._plan_activity_lock:
+                pending = any(key[0] == aid and not future.done() for key, future in self.hm_inflight.items())
+                # Existing acknowledgments identify a terrain key, not its
+                # generation. Retain every copy for that anchor until none of
+                # those keys is protected; guessing which old file is live is
+                # unsafe. The usual bounded committed/sent deques release it.
+                protected = aid in self._plan_generation_anchors and any(
+                    key[0] == aid for key in list(self.hm_committed) + list(self.hm_sent))
+                if aid in held or self._plan_active.get(aid) or pending or protected:
+                    continue
             del self.anchors[aid]
+            self._plan_generation_anchors.discard(aid)
             self.horizon_grids.pop(aid, None)
             self.horizon_failed.pop(aid, None)
             for ck in [k for k in self.tiles if k[0] == aid]:
@@ -2431,7 +2751,8 @@ class Server(SharingServerMixin):
             for key in [k for k in self.hm if k[0] == aid]:
                 if key not in self.hm_committed and key not in self.hm_sent:
                     del self.hm[key]
-            keep = {self.hm_name(k) for k in self.hm} | {i["ter"] for i in self.hm.values() if i.get("ter")}
+            keep = {i.get("_heightmap_name", self.hm_name(k)) for k, i in self.hm.items()} | {
+                i["ter"] for i in self.hm.values() if i.get("ter")}
             doomed = []
             for p in glob.glob(os.path.join(self.out_dir, f"far_{aid}_*")):
                 name = os.path.basename(p)
@@ -2445,6 +2766,14 @@ class Server(SharingServerMixin):
             # session folder, and the game's file watchers cost 4.5 ms a frame)
             for stem in ANCHOR_TILE_FILES:
                 doomed += glob.glob(os.path.join(self.out_dir, f"{stem}_{aid}_*"))
+            # Generation files remain protected with their anchor until the
+            # existing held/release protocol permits retirement. Never delete
+            # a prior generation merely because a newer one was prepared.
+            for directory in glob.glob(os.path.join(self.out_dir, f"world_{aid}_g*")):
+                if Path(self.out_dir).resolve() not in Path(directory).resolve().parents:
+                    continue
+                doomed.extend(str(path) for path in Path(directory).rglob('*') if path.is_file())
+                doomed.append(directory)  # queued after its files, using existing gradual session cleanup
             self.queue_delete(p for p in dict.fromkeys(doomed) if os.path.exists(p))
 
 
@@ -2511,6 +2840,18 @@ class Connection:
         self.foci = ()                  # other vehicles' collision foci there ((x, y, r, trees), parse_foci)
         self.vel = (0.0, 0.0)
         self.stream_scale, self.stream_updated = 1.0, -math.inf
+        self.lifecycle = False
+        self.stream_seq = self.received_seq = 0
+        self.feedback_seq = 0
+        self.stream_pending = {}
+        self.stream_pressure = None
+        self.stream_pressure_at = -math.inf
+        self.plan_receipt = None
+        self.plan_serial = 0
+        self.plan_inputs = None
+        self.request_versions = {}
+        self.prepared = {}
+        self.active_receipt = None
         self.cam = None                 # pose.cam (protocol 3), kept for diagnostics
         self.desired = {}               # key -> Tile (active anchor)
         self.refined = set()            # nodes refined by the last selection (hysteresis)
@@ -2754,8 +3095,74 @@ class Connection:
         self.send(out)
 
     def send(self, msg):
+        if msg.get("type") == "far_remove" and getattr(self, "lifecycle", False):
+            msg = dict(msg, retireThrough=self.stream_seq, lifecycle="retiring")
         if not self.writer.is_closing():
-            self.writer.write(protocol.encode(msg))
+            frame = protocol.encode(msg)
+            transport = getattr(self.writer, "transport", None)
+            buffered = transport.get_write_buffer_size() if transport is not None else 0
+            if len(frame) > protocol.MAX_FRAME + protocol.HEADER.size or buffered + len(frame) > streaming.PENDING_BYTES:
+                log.warning("client output budget exceeded; closing slow/oversized consumer")
+                self.writer.close()
+                return False
+            self.writer.write(frame)
+            kind = {"anchor_ready": "anchor", "anchor_error": "anchor",
+                    "terrain_ready": "terrain", "terrain_error": "terrain"}.get(msg.get("type"))
+            payload = getattr(self, "request_payloads", {}).get(kind)
+            if payload is not None and payload.get("requestId") == msg.get("requestId"):
+                if not hasattr(self, "request_replies"):
+                    self.request_replies = {}
+                self.request_replies[kind] = msg
+            return True
+        return False
+
+    def ensure_plan_receipt(self, aid=None):
+        if not getattr(self, "lifecycle", False):
+            return None
+        aid = self.active if aid is None else aid
+        inputs = self.s.input_receipt()
+        receipts = getattr(self, "plan_receipts", None)
+        if receipts is None:
+            self.plan_receipts = receipts = {}
+        if aid not in receipts or receipts[aid][0] != inputs:
+            self.plan_serial = getattr(self, "plan_serial", 0) + 1
+            receipts[aid] = (inputs, f"{self.s.sid}:{aid}:{self.plan_serial}")
+        receipt = receipts[aid][1]
+        if aid == self.active:
+            self.plan_receipt = receipt
+        return receipt
+
+    def _visual_room(self, extra_bytes=0, extra_ms=0):
+        if not getattr(self, "lifecycle", False):
+            return True
+        if time.monotonic() - self.stream_pressure_at > streaming.FEEDBACK_TTL or self.stream_pressure is None:
+            return False  # optional work fails closed; critical terrain uses its reserved lane
+        queued = self.stream_pressure
+        pending = self.stream_pending.values()
+        nbytes = queued["pendingBytes"] + sum(x[0] for x in pending)
+        ms = queued["installMs"] + sum(x[1] for x in self.stream_pending.values())
+        return nbytes + extra_bytes <= streaming.PENDING_BYTES and ms + extra_ms <= streaming.INSTALL_MS
+
+    def _stream_feedback(self, value):
+        pressure = streaming.pressure(value)
+        if (pressure is None or pressure["feedbackSeq"] <= getattr(self, "feedback_seq", 0)
+                or pressure["receivedSeq"] < self.received_seq or pressure["receivedSeq"] > self.stream_seq):
+            return
+        self.feedback_seq = pressure["feedbackSeq"]
+        self.received_seq = pressure["receivedSeq"]
+        self.stream_pending = {k: v for k, v in self.stream_pending.items() if k > self.received_seq}
+        self.stream_pressure, self.stream_pressure_at = pressure, time.monotonic()
+
+    def _new_request(self, kind, msg):
+        versions = getattr(self, "request_versions", None)
+        if versions is None:
+            self.request_versions = versions = {}
+        version = versions.get(kind, 0) + 1
+        versions[kind] = version
+        return version
+
+    def _current_request(self, kind, version):
+        return self.request_versions.get(kind) == version and not self.writer.is_closing()
 
     def backlog(self):
         """status.backlog: desired tiles of the current anchor that are not shown yet (V1_4_SPEC §4)."""
@@ -2838,6 +3245,7 @@ class Connection:
             log.warning("client %s: %s", self.peer, e)
         finally:
             self.s.connections.discard(self)
+            self.s.cancel_unwanted_tiles()
             if self.voice is not None:
                 self.voice.close()
             if not self.s.connections:
@@ -2860,6 +3268,24 @@ class Connection:
         t.add_done_callback(self.tasks.discard)
         return t
 
+    def replace_request(self, kind, msg, function):
+        pending = getattr(self, "request_tasks", None)
+        if pending is None:
+            self.request_tasks = pending = {}
+        if not hasattr(self, "request_payloads"):
+            self.request_payloads, self.request_replies = {}, {}
+        old = pending.get(kind)
+        if old is not None and self.request_payloads.get(kind) == msg:
+            if old.done() and kind in self.request_replies:
+                self.send(self.request_replies[kind])
+            return old  # an exact replay never cancels the sole shared-build consumer
+        if old is not None and not old.done():
+            old.cancel()  # shared build future is shielded and keeps its lease until it stops
+        self.request_payloads[kind] = dict(msg)
+        self.request_replies.pop(kind, None)
+        pending[kind] = self.spawn(function(msg))
+        return pending[kind]
+
     def dispatch(self, msg):
         kind = msg["type"]
         if kind == "voice":
@@ -2873,6 +3299,7 @@ class Connection:
                 self.voice = voicemod.VoiceManager(notify)
             self.voice.handle(msg)
         elif kind == "hello":
+            self.lifecycle = isinstance(msg.get("streaming"), dict) and msg["streaming"].get("lifecycle") == 1
             lay = self.s.layout
             fmt = msg.get("format", lay.format)
             if msg.get("protocol") != PROTOCOL:
@@ -2884,7 +3311,7 @@ class Connection:
                  "appVersion": updatesmod.local_version() or "",     # the release (VERSION): the players' reports
                  "sessionId": self.s.sid, "farFormat": self.s.far_format, "material": farfield.MATERIAL,
                  "nearVisual": self.s.near_visual, "attribution": self.s.attribution(),
-                 "streaming": {"small": budget.small()}}
+                 "streaming": {"small": budget.small(), "lifecycle": 1}}
             if self.s.imagery is not None:      # the world map credits the sources its view shows
                 m["imageryCredits"] = self.s.imagery.credits_by_area()
                 m["otherCredits"] = self.s.attribution_rest()
@@ -2937,7 +3364,7 @@ class Connection:
                 log.info("the game's %d %s on CPUs %s", n, "processes" if sys.platform == "win32" else "threads",
                          ",".join(map(str, sorted(self.s.game_cpus))))
         elif kind == "prepare_anchor":
-            self.spawn(self.prepare_anchor(msg))
+            self.replace_request("anchor", msg, self.prepare_anchor)
         elif kind == "server_list":             # the BeamNG.Earth servers for the tab in BeamMP's browser
             self.spawn(self.server_list())
         elif kind == "share":                   # a BeamMP session: serve our group (peerwork.GroupHelper)
@@ -2949,7 +3376,7 @@ class Connection:
         elif kind == "share_stop":
             self.s.share_stop()
         elif kind == "prepare_terrain":
-            self.spawn(self.prepare_terrain(msg))
+            self.replace_request("terrain", msg, self.prepare_terrain)
         elif kind == "commit_anchor":
             self.commit_anchor(msg.get("anchorId"))
         elif kind == "commit_terrain":
@@ -3046,7 +3473,8 @@ class Connection:
         return progress
 
     def terrain_msg(self, key, info):
-        out = {"cx": key[1], "cy": key[2], "heightmap": self.s.hm_vfs(key), "size": self.s.layout.block,
+        out = {"cx": key[1], "cy": key[2], "heightmap": (f"{self.s.vfs_dir}/{info['_heightmap_name']}"
+               if info.get("_heightmap_name") else self.s.hm_vfs(key)), "size": self.s.layout.block,
                "squareSize": heightmap.SQUARE, "zBase": info["zBase"], "maxHeight": info["maxHeight"],
                "q": info["q"]}
         if info.get("layers"):      # --surface on: one mask per material, MATERIALS order
@@ -3059,9 +3487,19 @@ class Connection:
             out["baseSize"] = self.s.layout.block * heightmap.SQUARE
         if info.get("ter"):         # the same block as the engine's terrain file (swapped in, no import)
             out["ter"] = f"{self.s.vfs_dir}/{info['ter']}"
+        if getattr(self, "lifecycle", False):
+            receipt = self.ensure_plan_receipt(key[0])
+            serial = getattr(self, "prepare_serial", 0) + 1
+            self.prepare_serial = serial
+            out.update(planReceipt=receipt, activationId=f"{receipt}/{serial}", lifecycle="prepared",
+                       supportComplete=not info.get("_provisional", False))
+            self.prepared[key] = (out["activationId"], receipt)
+            while len(self.prepared) > 32:
+                self.prepared.pop(next(iter(self.prepared)))
         return out
 
-    async def prepare_anchor(self, msg):
+    async def prepare_anchor(self, msg, _attempt=0):
+        request_version = self._new_request("anchor", msg)
         req = msg.get("requestId")
         try:
             lat, lon = float(msg["lat"]), float(msg["lon"])
@@ -3105,10 +3543,17 @@ class Connection:
             await asyncio.get_running_loop().run_in_executor(self.s.ui_pool, self.s.surface.ready, lat, lon)
             log.info("anchor %s: land cover wait %.2f s", anchor.id, time.perf_counter() - tw)
         pacer.foreground_begin()        # the player waits for this block: the background loops hold (pacer.hold)
+        provisional_receipt = self.s.input_receipt()
         try:
             if provisional:
-                info = await asyncio.get_running_loop().run_in_executor(
-                    self.s.hm_pool, self.s.make_provisional, anchor, cx, cy, self._progress())
+                lease = self.s._admission().try_acquire(("provisional", anchor.id), "critical", streaming.CRITICAL_BYTES)
+                if lease is None:
+                    raise RuntimeError("terrain admission busy; retry")
+                info = await asyncio.shield(self.s._submit_work(
+                    self.s.hm_pool, lease, self.s.make_provisional, anchor, cx, cy, self._progress()))
+                if provisional_receipt != self.s.input_receipt():
+                    raise RuntimeError("provisional terrain inputs changed; retry")
+                info["_input_receipt"] = provisional_receipt
             else:
                 info = await self.s.terrain(anchor, cx, cy, self._progress())
         except Exception as e:
@@ -3119,7 +3564,11 @@ class Connection:
             return
         finally:
             pacer.foreground_end()
+        if not self._current_request("anchor", request_version):
+            return
+        payload_receipt = info.get("_input_receipt", self.s.input_receipt())
         key = (anchor.id, cx, cy)
+        info["_provisional"] = provisional
         anchor.first_terrain = (cx, cy)
         self.s.anchors[anchor.id] = anchor
         self.s.hm_sent.append(key)
@@ -3134,6 +3583,18 @@ class Connection:
             if fl is not None and fl < gz - TUNNEL_FLOOR_UNDER_M:
                 floor_z = round(fl + gradingmod.ROAD_LIFT, 3)
                 log.info("anchor %d: in a tunnel, its floor %.1f under the ground %.1f", anchor.id, floor_z, gz)
+        if not self._current_request("anchor", request_version):
+            return
+        latest = self.s._plan_anchor(anchor) if hasattr(self.s, "_plan_anchor") else anchor
+        if (payload_receipt != self.s.input_receipt()
+                or info.get("_world_generation") != getattr(latest, "_world_generation", None)
+                or info.get("_world_receipt") != getattr(latest, "_world_receipt", None)):
+            if _attempt < 2:
+                return await self.prepare_anchor(msg, _attempt + 1)
+            self.teleport_pending = False
+            self.wake.set()
+            self.send({"type": "anchor_error", "requestId": req, "error": "terrain inputs changed before publication; retry"})
+            return
         log.info("anchor %d (%.5f, %.5f) ready in %.2f s, terrain at (%.0f, %.0f), groundZ %s; dem %s",
                  anchor.id, lat, lon, time.perf_counter() - t0, cx, cy,
                  "n/a" if gz is None else f"{gz:.1f}",
@@ -3142,6 +3603,8 @@ class Connection:
                  "groundZ": gz, "floorZ": floor_z, "terrain": self.terrain_msg(key, info), "provisional": provisional}
         if place is not None:           # (the player's spot off the origin, echoed: core places the car there)
             ready["px"], ready["py"] = place
+        if not self._current_request("anchor", request_version):
+            return
         self.send(ready)
         self.status(f"Terrain ready ({time.perf_counter() - t0:.1f} s)")
         if provisional:
@@ -3168,6 +3631,7 @@ class Connection:
             self.s._remove(os.path.join(self.s.out_dir, provisional_ter))
 
     async def prepare_terrain(self, msg):
+        request_version = self._new_request("terrain", msg)
         req = msg.get("requestId")
         try:
             aid = msg["anchorId"]
@@ -3188,6 +3652,9 @@ class Connection:
         self.terrain_wait += 1
         try:
             info = await self.s.terrain(anchor, cx, cy)
+        except asyncio.CancelledError:
+            self.terrain_wait -= 1
+            raise
         except Exception as e:
             self.terrain_wait -= 1
             log.exception("terrain request %s failed", req)
@@ -3198,6 +3665,8 @@ class Connection:
                 self.update_far()
             return
         self.terrain_wait -= 1
+        if not self._current_request("terrain", request_version) or aid != self.active:
+            return
         key = (aid, cx, cy)
         self.s.hm_sent.append(key)
         log.info("terrain_ready %s after %.0f ms", key, (time.perf_counter() - t0) * 1000)
@@ -3206,6 +3675,8 @@ class Connection:
     def commit_anchor(self, aid):
         if aid == self.active:
             return
+        if self.active is not None and (not isinstance(aid, int) or aid < self.active):
+            return  # duplicated/lost-order commits cannot reactivate an older coordinate frame
         if self.teleport_pending:
             self.teleport_pending = False
             self.wake.set()
@@ -3242,6 +3713,7 @@ class Connection:
         # Tiles sent but not swapped in are dropped by the mod at the anchor switch.
         self._retire((self.active, k) for k in self.sent)
         self.active = aid
+        self.ensure_plan_receipt()
         self.desired, self.sent, self.groups, self.queue, self.qi = {}, {}, [], [], 0
         self.refined, self.node_changed = set(), {}
         self.failed.clear()
@@ -3264,12 +3736,26 @@ class Connection:
     def commit_terrain(self, msg):
         aid = msg.get("anchorId")
         cx, cy = self.s.snap(_num(msg, "cx")), self.s.snap(_num(msg, "cy"))
+        if getattr(self, "lifecycle", False):
+            prepared = self.prepared.get((aid, cx, cy))
+            if (prepared is None or prepared != (msg.get("activationId"), msg.get("planReceipt"))
+                    or msg.get("planReceipt") != self.ensure_plan_receipt(aid)):
+                return
+            try:
+                activation_serial = int(msg["activationId"].rsplit("/", 1)[1])
+            except (ValueError, IndexError, TypeError):
+                return
+            if activation_serial <= getattr(self, "committed_activation_serial", 0):
+                return  # An older block's valid offer cannot roll a newer commit back.
         if aid != self.active:
             if aid in self.s.anchors and (self.active is None or aid > self.active):
                 self.commit_anchor(aid)
             else:
                 log.warning("commit_terrain for anchor %r (active %r) ignored", aid, self.active)
                 return
+        if getattr(self, "lifecycle", False):
+            self.active_receipt = msg["planReceipt"]
+            self.committed_activation_serial = activation_serial
         if self.block == self.s.layout.block_at(cx, cy):
             return
         # Far-tile keys do not depend on the block; only the forced L0 area moves.
@@ -3318,6 +3804,9 @@ class Connection:
             self.pz = _num(msg, "z", 0.0)
             self.stream_scale = streaming.feedback(msg.get("streaming"))
             self.stream_updated = time.monotonic()
+            self.ensure_plan_receipt()
+            if getattr(self, "lifecycle", False):
+                self._stream_feedback(msg.get("streaming"))
         elif aid in self.s.anchors and self.active in self.s.anchors:
             # A late pose of the previous anchor: move it into the active frame.
             src, dst = self.s.anchors[aid].frame, self.s.anchors[self.active].frame
@@ -3432,8 +3921,11 @@ class Connection:
         async def run():
             try:
                 pool = s.block_pools[LANE_PREFETCH][0] if s.block_pools else None     # its BC7 encode
-                name = await self.loop.run_in_executor(s.hm_pool, s.write_base, anchor, key[1], key[2], pool,
-                                                       next(s.base_rev))
+                revision = next(s.base_rev)
+                raw = s.photo_submit(False, ("refresh", key), s.write_base, anchor, key[1], key[2], pool, revision)
+                if raw is None:
+                    return
+                name = await asyncio.wrap_future(raw)
                 info = s.hm.get(key)
                 if name is None or info is None:
                     return
@@ -3711,6 +4203,9 @@ class Connection:
         started = {k for adds, _ in self.groups if any(a in self.sent for a in adds) for k in adds}
         fx, fy = self.view_focus
         todo = [self.desired[k] for k in needed if k not in self.sent]
+        now = time.monotonic()
+        old_arrivals = getattr(self, "queue_arrivals", {})
+        self.queue_arrivals = {t.key: old_arrivals.get(t.key, now) for t in todo}
 
         cone = (farfield.view_cone(self.cam)
                 if isinstance(self.cam, dict) and getattr(self, "cam_aid", None) == aid else None)
@@ -3727,10 +4222,13 @@ class Connection:
                 return (0 if gated else 1 if t.key in started else 2, priorities[k, 1], t.level, t.key)
             if gated:
                 cls = -1
-            return (cls, 0 if t.key in started else 1, priorities[k, 1], t.level, t.key)
+            return (cls, 0 if t.key in started else 1, streaming.arrival(t, self.focus, self.vel),
+                    self.queue_arrivals[t.key], priorities[k, 1], t.level, t.key)
         self.queue = [todo[k] for k in sorted(range(len(todo)), key=prio)]
         self.qi = 0
         self.failed.clear()
+        if hasattr(self.s, "cancel_unwanted_tiles"):
+            self.s.cancel_unwanted_tiles()
 
     def _next_tile(self):
         aid = self.active
@@ -3855,11 +4353,19 @@ class Connection:
             # their separate lanes. Old clients and expired feedback keep the hardware default.
             workers = streaming.worker_limit(workers, self.stream_scale, self.stream_updated, time.monotonic())
             while anchor is not None and not self.teleport_pending and len(self.inflight) < workers:
+                if not self._visual_room((len(self.inflight) + 1) * streaming.JOB_BYTES,
+                                         (len(self.inflight) + 1) * 5.0):
+                    break
                 t = self._next_tile()
                 if t is None:
                     break
-                self.inflight[(anchor.id, t.key)] = (self.s.tile(anchor, t), t)
-            if anchor is not None and self.s.imagery is not None and not self.teleport_pending:
+                future = self.s.tile(anchor, t)
+                if future is None:
+                    self.qi -= 1  # admission denial must not consume the wanted item
+                    break
+                self.inflight[(anchor.id, t.key)] = (future, t)
+            if (anchor is not None and self.s.imagery is not None and not self.teleport_pending
+                    and self._visual_room(streaming.JOB_BYTES, 5.0)):
                 # a tile at most every PREFETCH_AGAIN_S (a prefetch skips sources short of request tokens): the
                 # loop wakes on every tile done and every message from the game, and asking again for the same 40
                 # tiles each time kept the event loop busy (~22 s of a teleport on a Steam Deck, 2026-10-20)
@@ -3904,7 +4410,8 @@ class Connection:
             if waker is None:
                 waker = asyncio.ensure_future(self.wake.wait())
             futs = [f for f, _ in self.inflight.values()]
-            done, _ = await asyncio.wait(futs + [waker], return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(futs + [waker], timeout=streaming.RETRY_S,
+                                         return_when=asyncio.FIRST_COMPLETED)
             if waker in done:
                 waker = None
             for ck in [ck for ck, (f, _) in self.inflight.items() if f.done()]:
@@ -3918,8 +4425,18 @@ class Connection:
                     continue
                 if ck[0] != self.active or t.key not in self.desired or ck in self.shown or t.key in self.sent:
                     continue            # superseded meanwhile; the file stays cached
+                if getattr(fut, "_input_receipt", self.s.input_receipt()) != self.s.input_receipt():
+                    self.queue.append(t)
+                    continue
                 # the server's latest record: a live retexture may have finished since this build
                 info = self.s.tiles.get(ck, fut.result())
+                install_bytes = streaming.payload_cost(info, self.s.tex_size(t.level))
+                if install_bytes > streaming.JOB_BYTES:
+                    self.failed.add(t.key)
+                    continue
+                if not self._visual_room(install_bytes, 5.0):
+                    self.queue.append(t)
+                    continue
                 if info.material is not None and not self.s.matslots.owns(ck, info.material):
                     info = self.s.reslot(ck, info)      # its material name went to another tile meanwhile
                 self.sent[t.key] = t
@@ -3930,6 +4447,11 @@ class Connection:
                      "shape": f"{self.s.vfs_dir}/{info.shape or self.s.tile_name(*ck)}",
                      "pos": [round(v, 3) for v in info.pos], "err": round(info.err, 3),
                      "skirt": round(info.skirt, 2), "state": "group"}
+                if getattr(self, "lifecycle", False):
+                    self.stream_seq += 1
+                    self.stream_pending[self.stream_seq] = (install_bytes, 5.0)
+                    m.update(streamSeq=self.stream_seq, installBytes=install_bytes,
+                             payloadBytes=max(0, info.bytes + info.tex_bytes), lifecycle="prepared")
                 if info.sink is not None:
                     m["sink"] = round(info.sink, 2)
                 if info.shape is not None and info.shape.startswith("slot_"):  # pooled (matslots.py)

@@ -16,6 +16,7 @@ cell's map data and VERSION; its random choices (species, yaw, size, thinning ra
 - Groups: deciduous / conifer by a regional mix and height, shrub, rock (the mod maps groups to its
   stock shapes).
 """
+import json
 import logging
 import math
 import os
@@ -34,7 +35,7 @@ import staging
 
 log = logging.getLogger("earthd.vegetation")
 
-VERSION = 14          # (the cached cells hold their groups: 14 for the regional rules of GitHub #110)
+VERSION = 15          # functional group lineage survives rendered-cell cache reuse
 TREE_MIN_M = 3.0
 CROWN_SPACING = 0.5          # tops kept this many crown radii apart (0.8 looked sparse: the user, 2026-10-13)
 BUSH_MIN_M = 1.0
@@ -88,13 +89,14 @@ class Items:
     rank: np.ndarray            # float32 in [0, 1): thinning (a level shows those below its threshold)
     yaw: np.ndarray             # degrees
     scale: np.ndarray           # size variation (around 1)
+    provenance: tuple = ()      # source records contributing to this rendered cell
 
     def __len__(self):
         return len(self.lon)
 
     def take(self, sel):
         return Items(*(getattr(self, f)[sel] for f in ("lon", "lat", "height", "radius", "kind", "group",
-                                                       "rank", "yaw", "scale")))
+                                                       "rank", "yaw", "scale")), provenance=self.provenance)
 
 
 def _hash01(a, b, salt):
@@ -172,9 +174,12 @@ def _conifer_share(lat, lon):
 class Vegetation:
     def __init__(self, md, cache_dir=None):
         self.md = md
+        self.semantic_revision = getattr(getattr(md, 'semantic_store', None), 'revision', None)
+        self.functional_adapter = md.semantic_adapter('vegetation_types') if self.semantic_revision else None
         self.dem = None                 # (set by the server: rocks on bare ground by slope, ROCK_SLOPE)
         self.dir = os.path.join(cache_dir, "vegetation", f"v{VERSION}") if cache_dir else None
         self._mem = OrderedDict()
+        self._provenance = OrderedDict()  # bounded metadata, including transient shown cells
         self._lock = threading.Lock()
         self._cell_locks = {}
         self._failed = OrderedDict()    # cell -> (retry time, message); avoid a bad source busy-looping
@@ -207,7 +212,12 @@ class Vegetation:
                 raise
             with self._lock:
                 self._failed.pop(k, None)
-                self._mem[k] = items
+                self._provenance[k] = tuple(json.loads(json.dumps(getattr(items, 'provenance', ()))))
+                self._provenance.move_to_end(k)
+                while len(self._provenance) > MEM_CELLS:
+                    self._provenance.popitem(last=False)
+                if not getattr(items, '_semantic_transient', False):
+                    self._mem[k] = items
                 while len(self._mem) > MEM_CELLS:
                     self._mem.popitem(last=False)
             return items
@@ -258,6 +268,8 @@ class Vegetation:
 
     def _path(self, x, y):
         rel = getattr(self.md, "release", "x")
+        if self.semantic_revision:
+            rel = str(rel) + '/semantic-' + self.semantic_revision
         return os.path.join(self.dir, str(rel), str(x), f"{y}.npz") if self.dir else None
 
     def _load(self, x, y):
@@ -265,15 +277,32 @@ class Vegetation:
         fields = ("lon", "lat", "height", "radius", "kind", "group", "rank", "yaw", "scale")
         if p and os.path.exists(p):
             with np.load(p, allow_pickle=False) as f:
-                return Items(*(f[n] for n in fields))
+                return Items(*(f[n] for n in fields), provenance=tuple(json.loads(str(f["provenance"]))))
         items = self._build(x, y)
-        if p:
+        if p and not getattr(items, '_semantic_transient', False):
             os.makedirs(os.path.dirname(p), exist_ok=True)
             tmp = f"{p}.{os.getpid()}.{threading.get_ident()}.tmp"
             with open(tmp, "wb") as fh:
-                np.savez_compressed(fh, **{n: getattr(items, n) for n in fields})
+                np.savez_compressed(fh, **{n: getattr(items, n) for n in fields},
+                                    provenance=np.array(json.dumps(items.provenance, sort_keys=True)))
             staging.replace_cached(tmp, p)
         return items
+
+    def provenance(self, key):
+        """Cached rendered-cell metadata only; never builds cells or samples providers."""
+        k = (int(key[1]), int(key[2]))
+        with self._lock:
+            records = self._provenance.get(k)
+            if records is not None:
+                return tuple(json.loads(json.dumps(records)))
+        path = self._path(*k)
+        if path and os.path.exists(path):
+            try:
+                with np.load(path, allow_pickle=False) as cached:
+                    return tuple(json.loads(str(cached['provenance'])))
+            except (OSError, ValueError, KeyError):
+                return ()
+        return ()
 
     # --- the build ------------------------------------------------------------------------------
     def _build(self, x, y):
@@ -373,6 +402,23 @@ class Vegetation:
         conifer = u1 < _conifer_share(tlat, tlon) * np.clip(th / 12.0, 0.5, 1.2)
         group = np.where(is_tree, np.where(conifer, G_CONIFER, G_DECIDUOUS), G_SHRUB).astype(np.uint8)
         group = regional(group, th, tlat, tlon, lcls, _hash01(gx, gy, 7))
+        semantic_transient = False
+        functional_provenance = []
+        if self.functional_adapter is not None:
+            import glcfcs10
+            # Functional cover refines existing CHM tops. Height and spacing
+            # remain canopy-model structure; no tree or exact species is invented.
+            for start in range(0, len(tlon), glcfcs10.MAX_POINTS):
+                end = min(len(tlon), start + glcfcs10.MAX_POINTS)
+                selection = self.functional_adapter.lookup(tlon[start:end], tlat[start:end], lc)
+                semantic_transient |= getattr(selection, 'reason', '') == 'invalid_or_corrupt'
+                for functional, hint in glcfcs10.GROUP_HINTS.items():
+                    selected = is_tree[start:end] & (selection.source_index == glcfcs10.SOURCE_GLC) & (selection.functional == functional)
+                    if selected.any():
+                        functional_provenance.extend(p for p in selection.provenance
+                                                     if p.get("provider_id") == glcfcs10.PROVIDER_ID)
+                    view = group[start:end]
+                    view[selected] = G_CONIFER if hint == 'conifer' else G_DECIDUOUS
         kind = np.where(is_tree, KIND_TREE, KIND_BUSH).astype(np.uint8)
         jitter = chm.dx * 0.5
         tlon2, tlat2 = _to4326(mx[ii] + (u3 - 0.5) * jitter, my[jj] + (u4 - 0.5) * jitter)
@@ -392,7 +438,17 @@ class Vegetation:
             log.debug("vegetation: land use of %s: %s", (x, y), e)
         scatter = self._scatter(cd, lc, blocked | paved, chm, hs)
         edge = self._edge(cd, lc, blocked, road, chm, hs)
-        return _concat(_concat(tree, scatter), edge)
+        result = _concat(_concat(tree, scatter), edge)
+        if len(result):
+            records = list(getattr(cd, 'provenance', ())) + functional_provenance
+            # WorldCover controls water exclusion, barren suppression and scatter,
+            # even where GLC refines a CHM tree family.
+            if lc is not None:
+                import glcfcs10
+                records.append(glcfcs10._worldcover_provenance(lc))
+            result.provenance = tuple({json.dumps(p, sort_keys=True): p for p in records}.values())
+        result._semantic_transient = semantic_transient
+        return result
 
     def _edge(self, cd, lc, blocked, road, chm, hs):
         """The thicket along forest edges beside roads (EDGE_*), outside the dry West."""
@@ -531,7 +587,9 @@ def _empty():
 
 def _concat(a, b):
     return Items(*(np.concatenate([getattr(a, f), getattr(b, f)]) for f in
-                   ("lon", "lat", "height", "radius", "kind", "group", "rank", "yaw", "scale")))
+                   ("lon", "lat", "height", "radius", "kind", "group", "rank", "yaw", "scale")),
+                 provenance=tuple({json.dumps(p, sort_keys=True): p
+                                   for p in a.provenance + b.provenance}.values()))
 
 
 R = 6378137.0

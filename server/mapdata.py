@@ -49,6 +49,7 @@ import argparse
 import hashlib
 import json
 import logging
+import math
 import os
 import sys
 import threading
@@ -69,6 +70,7 @@ import overture
 import rangeread
 import staging
 import xproc
+from provider_contract import Evidence, PreparedStore, MAX_POINTS
 
 log = logging.getLogger("earthd.mapdata")
 
@@ -79,14 +81,15 @@ VERSION = 2                     # pipeline version: bump when what a cell's laye
 # the "oneway" rule (Overture access_restrictions by heading)
 # roads 3: OpenStreetMap's lanes, width, sidewalk, maxspeed... joined by way id (osmtags.py)
 # roads 4: OpenStreetMap's raceways appended (osmtags.raceways, GitHub #143)
-LAYER_VERSIONS = {"roads": 4}
+LAYER_VERSIONS = {"roads": 5}  # verified Layercake semantics and exact source provenance
                                 # (2: clipped polygon pieces `own`ed by their cell, exact cell edges,
                                 # the exact no-area test of clipped rings)
 VECTOR_LAYERS = ("roads", "connectors", "buildings", "water", "land_use", "infrastructure", "building_parts")
 RASTER_LAYERS = ("landcover", "canopy")
 OPTIONAL_LAYERS = ("building_parts",)   # built only when asked for by name (buildings.py), not by default
 LAYERS = tuple(x for x in VECTOR_LAYERS if x not in OPTIONAL_LAYERS) + RASTER_LAYERS
-ALL_LAYERS = VECTOR_LAYERS + RASTER_LAYERS
+SEMANTIC_LAYERS = ("vegetation_types", "soil", "water_evidence")
+ALL_LAYERS = VECTOR_LAYERS + RASTER_LAYERS + SEMANTIC_LAYERS
 DEFAULT_CACHE = os.path.expanduser("~/.cache/beamng-earth")
 # A request that the limiter or a policy refused for a non-demand kind (prefetch() returns False)
 DEFERRED = (netfetch.Deferred, netfetch.PolicyDenied, netfetch.BudgetExceeded, netfetch.HostUnavailable,
@@ -106,12 +109,26 @@ CANOPY = {
     "licence": "CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)",
     "url": "https://registry.opendata.aws/dataforgood-fb-forests/",
 }
+WORLDCOVER.update(source_revision=maprasters.WORLDCOVER_RELEASE, license='CC-BY-4.0',
+    coverage={'scope': 'worldwide_dataset_with_possible_gaps'}, crs='EPSG:4326',
+    vertical_datum='not_applicable', units='categorical_class', nodata=0,
+    resolution={'nominal_m': 10, 'native_degrees': 1 / 12000},
+    confidence='remote_sensing_classification', acquired_at=None, sha256=None)
+CANOPY.update(source_revision=maprasters.CHM_RELEASE, license='CC-BY-4.0',
+    coverage={'scope': 'dataset_coverage_with_possible_gaps', 'mercator_latitude_limit': 85.05112878},
+    crs='EPSG:3857', vertical_datum='height_above_model_ground', units='metres', nodata=255,
+    resolution={'nominal_m': 1.194}, confidence='canopy_height_model_not_surveyed_species',
+    acquired_at=None, sha256=None)
 # Short overlay wordings per provenance id (credits.py can take them when the map data is shown)
 CREDIT_LINES = {
     "overture": overture.ATTRIBUTION,
     "esa-worldcover": "© ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) "
                       "processed by ESA WorldCover consortium",
     "meta-wri-chm": "Canopy height: Meta & WRI",
+    "osm-layercake-highways": "© OpenStreetMap contributors; OSM US Layercake (ODbL-1.0)",
+    "semantic:vegetation_types": "GLC_FCS10 / ESA WorldCover (CC BY 4.0)",
+    "semantic:soil": "SoilGrids, ISRIC (CC BY 4.0)",
+    "semantic:water_evidence": "EC JRC/Google Global Surface Water, Copernicus terms",
 }
 THEME_OF = {name: spec["theme"] for name, spec in overture.LAYERS.items()}
 
@@ -200,6 +217,12 @@ def _layer_arrays(obj):
     """The content arrays of a layer (what the cache stores, minus derived `en`)."""
     if obj is None:
         return {"missing": np.array(True)}
+    if isinstance(obj, Evidence):
+        arrays = {'evidence': np.array(True),
+                  'evidence_meta': np.array(json.dumps({'quality': obj.quality, 'provenance': obj.provenance}, sort_keys=True))}
+        arrays.update({'value.' + k: v for k, v in obj.values.items()})
+        arrays.update({'valid.' + k: v for k, v in obj.valid.items()})
+        return arrays
     if isinstance(obj, maprasters.Raster):
         meta = {"crs": obj.crs, "x0": obj.x0, "y0": obj.y0, "dx": obj.dx, "dy": obj.dy,
                 "nodata": obj.nodata, "files": obj.files}
@@ -220,10 +243,14 @@ class MapData:
     release: the Overture release (overture.RELEASE)."""
 
     def __init__(self, cache_dir=DEFAULT_CACHE, fetcher=None, release=overture.RELEASE,
-                 threads=overture.DUCKDB_THREADS):
+                 threads=overture.DUCKDB_THREADS, semantic_root=None):
         self.cache_dir = cache_dir
         self.fetcher = fetcher if fetcher is not None else netfetch.Fetcher()
         self.release = release
+        semantic_root = semantic_root or os.environ.get('BNGE_SEMANTIC_ROOT')
+        self.semantic_store = PreparedStore(semantic_root) if semantic_root else None
+        self.worldplan_revision = {'roads_normalization': LAYER_VERSIONS['roads'],
+                                  'semantic_catalog': self.semantic_store.revision if self.semantic_store else None}
         self.raw_dir = os.path.join(cache_dir, "mapdata", "raw")
         self.overture = overture.Reader(self.raw_dir, self.fetcher, release, threads)
         self.rasters = maprasters.Rasters(self.raw_dir, self.fetcher)
@@ -239,11 +266,92 @@ class MapData:
         self.overture.close()
 
     def versions(self):
-        return {"pipeline": VERSION, "overture": self.release, "worldcover": maprasters.WORLDCOVER_RELEASE,
-                "canopy": maprasters.CHM_RELEASE}
+        result = {"pipeline": VERSION, "overture": self.release, "worldcover": maprasters.WORLDCOVER_RELEASE,
+                  "canopy": maprasters.CHM_RELEASE}
+        if self.semantic_store is not None:
+            result['semantic_catalog'] = self.semantic_store.revision
+        return result
+
+    def semantic_adapter(self, layer):
+        """Local prepared adapters, constructed once; no data acquisition here."""
+        if self.semantic_store is None:
+            return None
+        with self._lock:
+            adapters = self.__dict__.setdefault('_semantic_adapters', {})
+            if layer not in adapters:
+                if layer == 'vegetation_types':
+                    import glcfcs10
+                    adapters[layer] = glcfcs10.Adapter(self.semantic_store)
+                elif layer == 'soil':
+                    import soilgrids
+                    adapters[layer] = soilgrids.SoilGrids(self.semantic_store)
+                elif layer == 'water_evidence':
+                    import jrcwater
+                    adapters[layer] = jrcwater.JRCWater(self.semantic_store)
+                else:
+                    raise ValueError('unknown semantic layer')
+            return adapters[layer]
+
+    def soil_at(self, lat, lon):
+        adapter = self.semantic_adapter('soil')
+        if adapter is None:
+            return self._missing_semantics(('sand_fraction', 'clay_fraction', 'cfvo_fraction'), lat, lon)
+        return adapter.sample(lat, lon)
+
+    def water_evidence_at(self, lat, lon):
+        adapter = self.semantic_adapter('water_evidence')
+        if adapter is None:
+            return self._missing_semantics(('occurrence_fraction', 'seasonality_months'), lat, lon)
+        return adapter.sample(lat, lon)
+
+    @staticmethod
+    def _missing_semantics(names, lat, lon):
+        shape = np.broadcast_shapes(np.shape(lat), np.shape(lon))
+        if math.prod(shape) > MAX_POINTS:
+            raise ValueError('semantic lookup exceeds point budget')
+        return Evidence({n: np.full(shape, np.nan) for n in names},
+                        {n: np.zeros(shape, bool) for n in names}, (), 'missing')
+
+    def _semantic_layer(self, key, layer, kind):
+        # Explicitly requested normalized facts only. This worker-side grid is
+        # supplementary evidence, never an exact shoreline or a terrain edit.
+        west, south, east, north = key.bounds()
+        x = west + (np.arange(64) + .5) * (east-west) / 64
+        y = north - (np.arange(64) + .5) * (north-south) / 64
+        lon, lat = np.meshgrid(x, y)
+        adapter = self.semantic_adapter(layer)
+        if layer == 'vegetation_types':
+            import glcfcs10
+            arrays, _ = self.layer_arrays(key, 'landcover', kind)
+            cover = _raster_from(arrays)
+            wc = cover.sample(lon, lat)
+            selected = adapter.lookup(lon, lat, cover) if adapter else glcfcs10.select(
+                np.zeros(wc.shape), np.zeros(wc.shape, bool), wc, np.isin(wc, list(glcfcs10.WORLDCOVER_MAP)))
+            if adapter is None and selected.valid.any():
+                selected.provenance = (dict(WORLDCOVER, source_revision=WORLDCOVER['release'],
+                                            license='CC-BY-4.0', files=list(cover.files)),)
+            evidence = Evidence({'functional': selected.functional, 'native_class': selected.native_class,
+                                 'source_index': selected.source_index},
+                                {k: selected.valid for k in ('functional', 'native_class', 'source_index')},
+                                selected.provenance, 'transient_fallback' if getattr(selected, 'reason', '') == 'invalid_or_corrupt'
+                                else 'functional_cover_not_species')
+        elif adapter is None:
+            names = ('sand_fraction', 'clay_fraction', 'cfvo_fraction') if layer == 'soil' else ('occurrence_fraction', 'seasonality_months')
+            evidence = Evidence({n: np.full(lat.shape, np.nan) for n in names},
+                                {n: np.zeros(lat.shape, bool) for n in names}, (), 'missing')
+        else:
+            evidence = adapter.sample(lat, lon)
+        prov = {'id': 'semantic:' + layer, 'release': self.semantic_store.revision if self.semantic_store else 'unprepared',
+                'license': 'component-specific; see components', 'quality': evidence.quality,
+                'components': evidence.provenance, 'crs': 'EPSG:4326', 'bounds': list(key.bounds()),
+                'sampling_grid_shape': [64, 64], 'role': 'supplementary_evidence'}
+        return evidence, prov
 
     def path(self, key, layer):
-        source, release = _source(layer, self.release)
+        if layer in SEMANTIC_LAYERS:
+            source, release = 'semantic', self.semantic_store.revision if self.semantic_store else 'unprepared'
+        else:
+            source, release = _source(layer, self.release)
         lv = LAYER_VERSIONS.get(layer)
         name = layer if lv is None else f"{layer}.{lv}"
         return os.path.join(self.cache_dir, "mapdata", f"v{VERSION}", source, release, name,
@@ -331,8 +439,9 @@ class MapData:
             # the roads' OpenStreetMap tags are read alongside Overture's (each half a fresh cell's wait)
             osm = self._osm_pool().submit(self._osm_cell, key, kind) if layer == "roads" else None
             feats, sources = self.overture.query(layer, key, kind)
-            if osm is not None:
-                feats = self._osm(feats, osm.result())
+            osm_result = osm.result() if osm is not None else None
+            if osm_result is not None:
+                feats = self._osm(feats, osm_result)
             ox, oy = mapcells.owner(feats.attrs.get("cx", np.zeros(0)), feats.attrs.get("cy", np.zeros(0)), key.z)
             feats.own = (ox == key.x) & (oy == key.y)
             if feats.clipped is not None:
@@ -341,6 +450,11 @@ class MapData:
                 feats.own |= feats.clipped
             arrays = _layer_arrays(feats)
             prov = overture.sources_provenance(THEME_OF[layer], self.release, sources) if len(feats) else None
+            if prov is not None and getattr(osm_result, 'provenance', None):
+                prov = dict(prov, supplementary_sources=[osm_result.provenance])
+        elif layer in SEMANTIC_LAYERS:
+            evidence, prov = self._semantic_layer(key, layer, kind)
+            arrays = _layer_arrays(evidence)
         elif layer == "landcover":
             r = self.rasters.worldcover(key, kind)
             arrays = _layer_arrays(r)
@@ -412,6 +526,8 @@ class MapData:
                 return self._mirrored(key, layer, path, arrays), True
             try:
                 arrays = self._build(key, layer, kind)
+                if layer in SEMANTIC_LAYERS and json.loads(str(arrays['provenance'])).get('quality') == 'transient_fallback':
+                    return arrays, False
                 self._store(path, arrays)
             finally:
                 if mine:
@@ -555,11 +671,17 @@ class MapData:
                         cd.layers[layer] = f
                     else:
                         cd.layers[layer] = f.localize(frame)
+                elif 'evidence' in arrays:
+                    meta = json.loads(str(arrays['evidence_meta']))
+                    cd.layers[layer] = Evidence({k[6:]: v for k, v in arrays.items() if k.startswith('value.')},
+                                                {k[6:]: v for k, v in arrays.items() if k.startswith('valid.')},
+                                                tuple(meta['provenance']), meta['quality'])
                 elif "missing" in arrays:
                     cd.layers[layer] = None
                 else:
                     cd.layers[layer] = _raster_from(arrays)
-                self._remember((str(key), layer), (cd.layers[layer], prov, _nbytes(arrays)))
+                if not isinstance(cd.layers[layer], Evidence) or cd.layers[layer].quality != 'transient_fallback':
+                    self._remember((str(key), layer), (cd.layers[layer], prov, _nbytes(arrays)))
             if prov:
                 pid = prov["id"]
                 if pid in provs:            # roads + connectors: one transportation record
@@ -571,6 +693,8 @@ class MapData:
                                               for (a, b), n in sorted(merged.items())]
                 else:
                     provs[pid] = prov
+                for source in prov.get('supplementary_sources', ()):
+                    provs[source['id']] = source
             cd.stats[layer] = {"s": dt, "hit": hit}
         cd.provenance = [provs[k] for k in sorted(provs)]
         return cd

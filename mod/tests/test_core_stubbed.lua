@@ -265,11 +265,17 @@ T.check(pumpUntil(function() return #S.liveOf('TSStatic') == 4 end, 50), 'far_re
 -- poses at ~2 Hz, with velocity
 veh.vel = vec3(20, 1, 0)
 local p0 = #received('pose')
+local previousFeedback = last('pose') and last('pose').streaming and last('pose').streaming.feedbackSeq or 0
 frames(20) -- 1 s
 local np = #received('pose') - p0
 T.check(np >= 1 and np <= 3, 'pose rate ~2 Hz (' .. np .. ' in 1 s)')
 local pose = last('pose')
 T.check(pose.anchorId == 1 and pose.lat and pose.lon and pose.vx == 20 and pose.vy == 1, 'pose fields incl. vx, vy')
+T.check(pose.streaming and type(pose.streaming.receivedSeq) == 'number' and
+  type(pose.streaming.pendingBytes) == 'number' and type(pose.streaming.installMs) == 'number',
+  'normal vehicle pose samples far-field installation pressure in updateWorld scope')
+T.check(type(pose.streaming.feedbackSeq) == 'number' and pose.streaming.feedbackSeq > previousFeedback,
+  'normal vehicle poses increment the connection feedback sequence')
 T.check(pose.cam and pose.cam.fx == 1 and pose.cam.fovDeg == 65 and pose.cam.x == veh.pos.x - 6, 'pose carries the camera (protocol 3)')
 
 ------------------------------------------------------------------------------------------

@@ -96,13 +96,14 @@ MOD_TO_SERVER = {
     # restarted server keeps an earlier run's folder named here, docs/ROADMAP.md "Robustness" 3)
     "hello": {"protocol": F(int), "format": F(int), "modVersion": F(str), "sessions": F((list, dict), OPT),
               # a reconnect: the pooled far-tile slots [[slot, serial], ...] the mod's objects hold for that session
-              "slotSession": F(str, OPT), "slotsHeld": F((list, dict), OPT)},
+              "slotSession": F(str, OPT), "slotsHeld": F((list, dict), OPT), "streaming": F(dict, OPT)},
     "prepare_anchor": {"requestId": F(int), "lat": F(NUM), "lon": F(NUM), "cx": F(NUM, OPT), "cy": F(NUM, OPT),
                        # 2026-10-22: the player's spot when not the origin (BeamMP: onto another player's anchor)
                        "px": F(NUM, OPT), "py": F(NUM, OPT)},
     "commit_anchor": {"anchorId": F(int)},
     "prepare_terrain": {"requestId": F(int), "anchorId": F(int), "cx": F(NUM), "cy": F(NUM)},
-    "commit_terrain": {"anchorId": F(int), "cx": F(NUM), "cy": F(NUM)},
+    "commit_terrain": {"anchorId": F(int), "cx": F(NUM), "cy": F(NUM),
+                       "planReceipt": F(str, OPT), "activationId": F(str, OPT), "lifecycle": F(str, OPT)},
     "pose": {"anchorId": F(int), "x": F(NUM), "y": F(NUM), "z": F(NUM), "vx": F(NUM), "vy": F(NUM), "lat": F(NUM),
              "lon": F(NUM), "speed": F(NUM), "cam": F(dict, OPT), "streaming": F(dict, OPT),
              "follow": F(bool, OPT),        # false: the altitude rule holds the block (no prefetch)
@@ -147,7 +148,8 @@ TERRAIN = {"cx": F(NUM), "cy": F(NUM), "heightmap": F(str), "size": F(int), "squ
            "zBase": F(NUM), "maxHeight": F(NUM), "q": F(NUM),
            "layers": F(list, OPT), "materials": F(list, OPT),     # --surface on (surface.py)
            "base": F(str, OPT), "baseSize": F(NUM, OPT),           # --near-visual detail: the block's photo
-           "ter": F(str, OPT)}                                     # the block as a .ter (swapped in, no import)
+           "ter": F(str, OPT), "planReceipt": F(str, OPT), "activationId": F(str, OPT),
+           "lifecycle": F(str, OPT), "supportComplete": F(bool, OPT)}
 LANDMARK_ROW = {"id": F(str), "title": F(str), "lat": F(NUM), "lon": F(NUM),
                 "shape": F(str), "materials": F(str), "height_m": F(NUM),
                 "x": F(NUM), "y": F(NUM), "z": F(NUM)}
@@ -200,10 +202,11 @@ SERVER_TO_MOD = {
                  # protocol 4, satellite imagery: the tile's own material (all three, or none)
                  "material": F(str, OPT), "texture": F(str, OPT), "detail": F(bool, OPT),
                  "tex": F(int, OPT),            # v1.4 M1: texture px (FORMAT 4, with the material)
-                 "slotSerial": F(int, OPT)},    # a pooled shape file's send serial (matslots.py; pose.slotsGone)
+                 "slotSerial": F(int, OPT), "streamSeq": F(int, OPT), "installBytes": F(int, OPT),
+                 "payloadBytes": F(int, OPT), "lifecycle": F(str, OPT)},
     "far_swap": {"anchorId": F(int), "id": F(int), "add": F(list), "remove": F(list), "dIn": F(NUM),
                  "dOut": F(NUM)},
-    "far_remove": {"anchorId": F(int), "key": F(str)},
+    "far_remove": {"anchorId": F(int), "key": F(str), "retireThrough": F(int, OPT), "lifecycle": F(str, OPT)},
     "far_done": {"anchorId": F(int), "count": F(int)},
     # --colormatch / --deshadow: a shown (or held) tile's texture rendered again under a new name
     # (additive, protocol 4; exercised by RetexMessagesTest, a session whose colour-match regions turn ready)
@@ -232,8 +235,8 @@ SERVER_TO_MOD = {
     # road tiles near the player (roads.py; additive, with map data only): a JSON file of DecalRoad chunks
     "roads_tile": {"anchorId": F(int), "key": F(str), "path": F(str), "n": F(int),
                    "data": F(dict, OPT),       # the file's JSON, so the game need not open it (staging.inline_json)
-                   "slots": F(dict, OPT)},     # {what: [pooled shape path, serial]} (matslots.py; pose.slotsGone)
-    "roads_drop": {"anchorId": F(int), "key": F(str)},
+                   "slots": F(dict, OPT), "planReceipt": F(str, OPT), "lifecycle": F(str, OPT)},
+    "roads_drop": {"anchorId": F(int), "key": F(str), "planReceipt": F(str, OPT)},
     # trees, bushes and rocks of a tile (vegetation.py, --trees on): a JSON file of items
     "veg_tile": {"anchorId": F(int), "key": F(str), "path": F(str), "n": F(int), "data": F(dict, OPT)},
     "veg_drop": {"anchorId": F(int), "key": F(str)},
@@ -243,7 +246,7 @@ SERVER_TO_MOD = {
     "bldfar_drop": {"anchorId": F(int), "key": F(str)},
     # the AI road graph around the player (navgraph.py, --traffic on): a JSON file of nodes and edges
     "navgraph": {"anchorId": F(int), "path": F(str), "cx": F(NUM), "cy": F(NUM), "nodes": F(int), "edges": F(int),
-                 "serial": F(int)},
+                 "serial": F(int), "planReceipt": F(str, OPT), "lifecycle": F(str, OPT)},
     # the download cache's usage (cache.py; additive, with a Cache only): after hello and every mod 'cache'
     # ... its answer: the patch's shape and centre, or an error (the mod asks again later)
     "terrain_patch": {"anchorId": F(int), "key": F(str), "parts": F(list, OPT),     # [{path, x, y}]: small meshes
@@ -359,6 +362,50 @@ def lua_function(text, name):
     local) up to the next top-level `end`; all of them if there are several (a wrapper and its body)."""
     ms = re.finditer(rf"^(?:(?:local )?function (?:M\.)?{name}\(|{name} = function\().*?^end", text, re.S | re.M)
     return "\n".join(m.group(0) for m in ms)
+
+
+class NegotiatedLifecycleAgreementTest(test_server.ServerHarness):
+    """Real framed local connection exercises optional capability and activation metadata."""
+    near_visual, block = 'mesh', 512
+
+    def test_negotiated_receipt_commit_and_byte_feedback(self):
+        self.c.send(dict(type='hello', protocol=4, format=4, modVersion='fixture', streaming={'lifecycle': 1}))
+        hello, _ = self.c.until(lambda m: m['type'] == 'hello', timeout=10)
+        self.assertEqual(hello['streaming']['lifecycle'], 1)
+        ready = self.prepare_anchor(1, test_server.LAT, test_server.LON)
+        tr, aid = ready['terrain'], ready['anchorId']
+        self.assertEqual(tr['lifecycle'], 'prepared')
+        self.assertTrue(tr['supportComplete'])
+        self.assertIsInstance(tr['planReceipt'], str)
+        self.assertIsInstance(tr['activationId'], str)
+        self.c.send(dict(type='commit_anchor', anchorId=aid))
+        self.c.send(dict(type='commit_terrain', anchorId=aid, cx=tr['cx'], cy=tr['cy'],
+                         planReceipt=tr['planReceipt'], activationId=tr['activationId'], lifecycle='activated'))
+        feedback_seq = 0
+        def pose(seq, pending):
+            nonlocal feedback_seq
+            feedback_seq += 1
+            self.c.send(dict(type='pose', anchorId=aid, x=0, y=0, vx=0, vy=0, z=1500,
+                             streaming=dict(scale=1, feedbackSeq=feedback_seq,
+                                            receivedSeq=seq, pendingBytes=pending, installMs=0)))
+        pose(0, 0)
+        tile, _ = self.c.until(lambda m: m['type'] == 'far_tile', timeout=30)
+        self.assertEqual(tile['lifecycle'], 'prepared')
+        self.assertGreater(tile['streamSeq'], 0)
+        self.assertGreaterEqual(tile['installBytes'], tile['payloadBytes'])
+        self.assertLessEqual(tile['installBytes'], earthd.streaming.JOB_BYTES)
+        pose(tile['streamSeq'], earthd.streaming.PENDING_BYTES)
+        # An explicit later request is a framing/dispatch barrier for the preceding pose and commit.
+        self.c.send(dict(type='prepare_terrain', requestId=2, anchorId=aid, cx=tr['cx'], cy=tr['cy']))
+        self.c.until(lambda m: m['type'] == 'terrain_ready' and m['requestId'] == 2, timeout=30)
+        self.assertEqual(self.conn().active_receipt, tr['planReceipt'])
+        self.assertFalse(self.conn()._visual_room(1, 0), 'receipt acknowledgement cannot free pending install bytes')
+        for message in (hello, ready, tile):
+            spec = SERVER_TO_MOD[message['type']]
+            self.assertLessEqual(set(message) - {'type'}, set(spec))
+            for name, (types, flags) in spec.items():
+                if name in message and message[name] is not None:
+                    self.assertIsInstance(message[name], types)
 
 
 class AgreementTableTest(unittest.TestCase):

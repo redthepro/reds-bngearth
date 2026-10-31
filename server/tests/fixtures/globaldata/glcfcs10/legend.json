@@ -1,0 +1,10 @@
+{
+  "source": "https://zenodo.org/records/14729665",
+  "publisher_file": "GLC_FCS10maps_colormap.lyr",
+  "publisher_file_sha256": "bdbfc22d96c6a5f8ebe6a16b94429f8e4338dd6babe46363c6e68bb932c9c896",
+  "license": "CC-BY-4.0",
+  "map_year": 2023,
+  "fixture_kind": "publisher legend values, not a surveyed raster scene",
+  "native_classes": [11, 12, 20, 51, 52, 61, 62, 71, 72, 81, 82, 91, 92, 121, 122, 130, 140, 150, 181, 182, 183, 184, 185, 186, 187, 191, 192, 200, 210, 220],
+  "functional_names": ["herbaceous_cropland", "woody_cropland", "herbaceous_cropland", "broadleaf_evergreen", "broadleaf_evergreen", "broadleaf_deciduous", "broadleaf_deciduous", "needleleaf_evergreen", "needleleaf_evergreen", "needleleaf_deciduous", "needleleaf_deciduous", "mixed_forest", "mixed_forest", "evergreen_shrub", "deciduous_shrub", "grassland", "lichen_moss", "sparse_vegetation", "swamp", "marsh", "flooded_flat", "saline", "mangrove", "salt_marsh", "tidal_flat", "built", "built", "bare", "water", "snow_ice"]
+}

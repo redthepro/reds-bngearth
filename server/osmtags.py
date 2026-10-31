@@ -19,6 +19,8 @@ read the same cell file, so a road's lanes and width agree everywhere). Unreacha
 roads use their width guesses (roads.carriageway), as before.
 """
 import logging
+import hashlib
+from datetime import datetime, timedelta, timezone
 import os
 import re
 import threading
@@ -57,11 +59,31 @@ USED = {"id", "bbox", "lanes", "width", "maxspeed", "sidewalk", "lit", "smoothne
 FLOATS = ("lanes", "width", "maxspeed", "osm_layer")
 TEXTS = ("sidewalk", "lit", "smoothness", "osm_surface", "osm_oneway")
 
+# Verified Layercake 36-column schema (pinned footer evidence, phase 04).
+# Strings retain restrictions rather than converting an absent tag into permission.
+SEMANTIC_COLUMNS = {name.replace(':', '_'): name for name in (
+    'tracktype', 'access', 'motor_vehicle', 'bicycle', 'foot', 'crossing',
+    'cycleway', 'cycleway:left', 'cycleway:right')}
+COLUMNS.update({name: f'lower(trim("{source}"))' for name, source in SEMANTIC_COLUMNS.items()})
+COLUMNS.update(osm_version='TRY_CAST(version AS INTEGER)', osm_timestamp='CAST(epoch_us(timestamp) AS VARCHAR)')
+USED.update(SEMANTIC_COLUMNS.values())
+USED.update(('version', 'timestamp'))
+FLOATS += ('osm_version',)
+TEXTS += tuple(SEMANTIC_COLUMNS) + ('osm_timestamp',)
+COLUMN_SOURCES = dict(SEMANTIC_COLUMNS, osm_version='version', osm_timestamp='timestamp')
+
+
+class TagCell(tuple):
+    def __new__(cls, tags, ways, provenance):
+        value = super().__new__(cls, (tags, ways))
+        value.provenance = provenance
+        return value
+
 
 # Racetracks (GitHub #143): Overture's transportation theme has no highway=raceway (Daytona's oval and road course, the
 # Nordschleife: nothing), so the cell's raceways come from the same Layercake file with their geometry: ways that are
 # highway=raceway, read only from the row groups whose highway column has one (raceways()).
-RACEWAY_COLUMNS = ("id", "highway", "name", "surface", "width", "lanes", "layer", "bridge", "tunnel", "oneway")
+RACEWAY_COLUMNS = ("id", "highway", "name", "surface", "width", "lanes", "layer", "bridge", "tunnel", "oneway", "version")
 
 
 def way_id(record):
@@ -139,7 +161,16 @@ class OsmTags:
         for attempt in (0, 1):
             etag, remote = self.version(kind)
             try:
-                return self._cell(remote, bounds, kind)
+                tags, ways = self._cell(remote, bounds, kind)
+                return TagCell(tags, ways, {
+                    'id': 'osm-layercake-highways', 'source_revision': etag,
+                    'release': etag, 'license': 'ODbL-1.0', 'licence': 'ODbL-1.0',
+                    'url': self.url, 'crs': 'OGC:CRS84', 'units': 'tag-specific',
+                    'attribution': '© OpenStreetMap contributors; OSM US Layercake',
+                    'confidence': 'mapped_tags; missing is unknown',
+                    'source_sha256': None, 'acquired_at': None,
+                    'schema_footer_sha256': getattr(remote, '_layercake_footer_sha256', None),
+                })
             except rangeread.Changed:
                 if attempt:
                     raise
@@ -158,7 +189,10 @@ class OsmTags:
         tail = remote.read(max(0, remote.size - overture.FOOTER_GUESS), remote.size, kind)
         n = int.from_bytes(tail[-8:-4], "little")
         if n + 8 > len(tail):
-            remote.read(remote.size - n - 8, remote.size, kind)
+            footer = remote.read(remote.size - n - 8, remote.size, kind)
+        else:
+            footer = tail[-n-8:]
+        remote._layercake_footer_sha256 = hashlib.sha256(footer).hexdigest()
         meta = con.execute(f"""SELECT row_group_id, row_group_num_rows, path_in_schema, stats_min, stats_max,
             dictionary_page_offset, data_page_offset, total_compressed_size FROM parquet_metadata({uri})
             ORDER BY row_group_id, column_id""").fetchall()
@@ -200,6 +234,7 @@ class OsmTags:
         try:
             uri = f"'{proto}://{PATH}'"
             groups = self._groups(con, uri, remote, kind)
+            available = {column for group in groups.values() for column in group['cols']}
             cand = self._candidates(groups, bounds)
             if not cand:
                 return {}, []
@@ -210,11 +245,12 @@ class OsmTags:
                                f"{groups[rg]['first'] + groups[rg]['n'] - 1}" for rg in cand)
             box = (f"bbox.xmin <= {lon1!r} AND bbox.xmax >= {lon0!r} AND bbox.ymin <= {lat1!r} "
                    f"AND bbox.ymax >= {lat0!r}")
-            cols = ", ".join(f"{expr} AS \"{name}\"" for name, expr in COLUMNS.items())
+            cols = ", ".join(f"{expr if COLUMN_SOURCES.get(name, name) in available or name not in COLUMN_SOURCES else 'NULL'} AS \"{name}\""
+                             for name, expr in COLUMNS.items())
             # only the ways with a tag the roads use (and the raceways): join() treats a way without one as one not
             # here, and building a dict per way of every highway in the cell was most of this thread's CPU
             # (osmtags, 14 CPU-s of a Deck's teleport, 2026-10-23)
-            some = " OR ".join(f"{c} IS NOT NULL" for c in sorted(USED - {"id", "bbox"}))
+            some = " OR ".join(f'"{c}" IS NOT NULL' for c in sorted((USED - {"id", "bbox", "version", "timestamp"}) & available)) or 'FALSE'
             rows = con.execute(f"""SELECT id, highway = 'raceway', file_row_number, {cols}
                 FROM read_parquet({uri}, file_row_number = true)
                 WHERE ({only}) AND {box} AND (highway = 'raceway' OR {some})""").fetchall()
@@ -229,7 +265,7 @@ class OsmTags:
                     con.execute("SET enable_geoparquet_conversion = false")
                 except Exception:
                     pass
-                rcols = ", ".join(f'"{c}"' for c in RACEWAY_COLUMNS)
+                rcols = ", ".join(f'"{c}"' if c in available else f'NULL AS "{c}"' for c in RACEWAY_COLUMNS)
                 rows_in = ", ".join(str(int(r)) for r in race)
                 got = con.execute(f"""SELECT {rcols}, geometry FROM read_parquet({uri}, file_row_number = true)
                     WHERE file_row_number IN ({rows_in})""").fetchall()
@@ -242,6 +278,13 @@ class OsmTags:
             con.close()
         names = list(COLUMNS)
         tags = {int(r[0]): {k: v for k, v in zip(names, r[3:]) if v is not None} for r in rows}
+        for values in tags.values():
+            if 'osm_timestamp' in values:
+                try:
+                    instant = datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=int(values['osm_timestamp']))
+                    values['osm_timestamp'] = instant.isoformat().replace('+00:00', 'Z')
+                except (ValueError, OverflowError):
+                    values.pop('osm_timestamp')
         ways = []
         for row in got:
             coords = _linestring(bytes(row[-1]))
@@ -293,7 +336,7 @@ def raceway_features(ways):
     f.attrs = {"class": mg.text_column(["raceway"] * n), "subtype": mg.text_column(["road"] * n),
                "subclass": mg.text_column([""] * n), "name": mg.text_column([w.get("name") for w in ways]),
                "src_dataset": mg.text_column(["OpenStreetMap"] * n),
-               "src_record": mg.text_column([f"w{int(w['id'])}@0" for w in ways]),
+               "src_record": mg.text_column([f"w{int(w['id'])}@{int(w.get('version') or 0)}" for w in ways]),
                "cx": np.array([float(c[:, 0].min() + c[:, 0].max()) / 2 for c in coords]),
                "cy": np.array([float(c[:, 1].min() + c[:, 1].max()) / 2 for c in coords])}
     f.rules = {"flags": mg.rule_table(flags), "level": mg.rule_table(levels, "float"),
@@ -329,5 +372,27 @@ def join(feats, tags):
             [float(tags.get(w, {}).get(c, np.nan)) if w is not None else np.nan for w in ids], np.float64)
     for c in TEXTS:
         feats.attrs[c if c.startswith("osm_") else "osm_" + c] = mg.text_column(
-            [str(tags.get(w, {}).get(c, "")) if w is not None else "" for w in ids])
+            [str(tags.get(w, {}).get(c) or "").strip() if w is not None else "" for w in ids])
+    for c in SEMANTIC_COLUMNS:
+        name = 'osm_' + c
+        feats.attrs[name + '_known'] = np.asarray(feats.attrs[name] != '', bool)
     return feats
+
+
+def motor_access(feats, i):
+    """True/False/None for explicit unrestricted/forbidden/unknown motor access.
+
+    Conditional/destination/agricultural restrictions remain tags, not guessed
+    blanket prohibitions. A motor-specific tag takes precedence over access.
+    """
+    for name in ('osm_motor_vehicle', 'osm_access'):
+        values = feats.attrs.get(name)
+        value = str(values[i]).lower().strip() if values is not None else ''
+        if not value:
+            continue
+        if value in ('no', 'private'):
+            return False
+        if value in ('yes', 'permissive', 'designated', 'official'):
+            return True
+        return None
+    return None

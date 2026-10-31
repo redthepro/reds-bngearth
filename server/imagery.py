@@ -110,6 +110,17 @@ class Source:
     # (season.leaf_on) when the Imagery's leaf_on is set
     leaf_off: bool = False
 
+    def provider_contract(self):
+        """Coverage is an eligibility envelope, not proof of pixels everywhere."""
+        return {'id': self.name, 'coverage': {'bounds_south_west_north_east': list(self.bounds) or None,
+                                             'min_zoom': self.min_zoom, 'max_zoom': self.max_zoom},
+                'source_revision': None, 'service_configuration': self.url,
+                'acquired_at': None, 'license': self.attribution, 'attribution': self.attribution,
+                'crs': 'EPSG:3857', 'vertical_datum': 'not_applicable', 'units': 'RGB uint8',
+                'resolution': {'zoom_dependent': True}, 'nodata': {'blank_policy': self.nodata},
+                'confidence': 'coverage_envelope_only; runtime pixel validity still required',
+                'sha256': None, 'quality': 'service_not_immutable_release'}
+
 
 SOURCES = {
     "usgs": Source("usgs", "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}",
@@ -336,7 +347,7 @@ class Imagery:
     strict = False
 
     def __init__(self, cache_dir, chain=DEFAULT_CHAIN, fetch_workers=FETCH_WORKERS, mem_tiles=None,
-                 tone=1.0, deshadow=None, colormatch=None, fetcher=None, leaf_on=True, season_mode="off"):
+                 tone=1.0, deshadow=None, colormatch=None, fetcher=None, leaf_on=True, season_mode="off", regional=None):
         """deshadow: an optional deshadow.Deshadow (--deshadow lambert|full): _mosaic relights its
         source's tiles; None = the imagery as served (byte-identical textures).
         colormatch: an optional colormatch.ColorMatch (--colormatch s2): _mosaic removes the colour
@@ -346,6 +357,11 @@ class Imagery:
         season_mode: the season grade of every texture (season.amounts_for: "auto" = today's, "fall", "off")."""
         self.cache_dir = cache_dir
         self.chain = tuple(SOURCES[s] if isinstance(s, str) else s for s in chain)
+        self.regional_enabled = os.environ.get('BNGE_REGIONAL_PROVIDERS', 'on') != 'off' if regional is None else bool(regional)
+        if not self.regional_enabled:
+            self.chain = tuple(s for s in self.chain if not s.bounds and s.name not in ('md6in', 'naip', 'naipusda', 'usgs'))
+            if not self.chain:
+                raise ValueError('no global imagery fallback remains in the selected chain')
         self.fetcher = fetcher if fetcher is not None else netfetch.Fetcher()
         self.fetcher.register_chain("imagery", [s.url for s in self.chain])
         self.pool = ThreadPoolExecutor(min(fetch_workers, FETCH_WORKERS), thread_name_prefix="img-fetch")
@@ -381,7 +397,7 @@ class Imagery:
         """Attribution line for the sources in use (with --colormatch, its reference layers too:
         their data shape the USGS colours even where they are not in the chain)."""
         names = [s.name for s in self.chain]
-        extra = [SOURCES[n] for n in getattr(self.colormatch, "refs", ()) if n not in names]
+        extra = [SOURCES[n] for n in getattr(self.colormatch, "refs", ()) if n not in names and self._enabled_source(SOURCES[n])]
         if names == list(DEFAULT_CHAIN) and not extra:
             return ATTRIBUTION
         return "Imagery: " + "; ".join(s.attribution for s in list(self.chain) + extra)
@@ -391,7 +407,7 @@ class Imagery:
         area), for the world map to credit what its view shows (2026-10-15: the map listed 31 regional services
         over Paris)."""
         names = [s.name for s in self.chain]
-        extra = [SOURCES[n] for n in getattr(self.colormatch, "refs", ()) if n not in names]
+        extra = [SOURCES[n] for n in getattr(self.colormatch, "refs", ()) if n not in names and self._enabled_source(SOURCES[n])]
         out = []
         for src in list(self.chain) + extra:
             box = src.bounds or US_CREDIT_BOXES.get(src.name)
@@ -405,6 +421,9 @@ class Imagery:
     def _count(self, what):
         with self._lock:
             self.stats[what] = self.stats.get(what, 0) + 1
+
+    def _enabled_source(self, source):
+        return getattr(self, 'regional_enabled', True) or (not source.bounds and source.name not in ('md6in', 'naip', 'naipusda', 'usgs'))
 
     def stats_snapshot(self):
         with self._lock:
@@ -652,9 +671,11 @@ class Imagery:
         if kind == "demand" and getattr(self._caller, "urgent", False):
             kind = "urgent"
         keys = list(dict.fromkeys(keys))
+        disabled = {k: None for k in keys if not self._enabled_source(k[0])}
+        keys = [k for k in keys if k not in disabled]
         probes = {k: self._probe_key(k) for k in keys}
         known = self.tiles({p for p in probes.values() if p is not None}, kind) if any(probes.values()) else {}
-        out, futs = {}, {}
+        out, futs = dict(disabled), {}
         with self._lock:
             for k in keys:
                 if probes[k] is not None and not self._covered(known[probes[k]]):

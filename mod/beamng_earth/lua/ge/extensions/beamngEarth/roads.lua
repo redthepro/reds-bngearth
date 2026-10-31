@@ -99,6 +99,18 @@ local lastError = nil
 local sinceChange = stopwatch.new()  -- ms since a tile arrived / went or a road was made / deleted
 local sinceReload = stopwatch.new()
 local collisionDirty = false
+local supportVersion = 0
+local committedAnchor, committedReceipt = nil, nil
+
+function M.setTerrainReceipt(aid, receipt)
+  if committedAnchor ~= aid or committedReceipt ~= receipt then supportVersion = supportVersion + 1 end
+  committedAnchor, committedReceipt = aid, receipt
+end
+
+local function compatible(t)
+  return (not committedReceipt and not t.planReceipt) or
+    (t.anchor == committedAnchor and t.planReceipt == committedReceipt)
+end
 local lastReloadAt = -math.huge   -- now() of the last be:reloadCollision (ours or another's): M.ahead
 local reloads = 0                 -- be:reloadCollision runs so far (ours or another's): M.reloads
 local sinceUrgent = math.huge     -- frames since the last urgent walk import (M.urgentWalk)
@@ -239,6 +251,7 @@ local function noteUnit(kind, ms, shape)
 end
 
 local function dropTile(key)
+  supportVersion = supportVersion + 1
   local t = tiles[key]
   if not t then return end
   for _, sl in pairs(t.slots or {}) do slotDrop(sl) end
@@ -396,10 +409,11 @@ end
 -- Server message `roads_tile` {anchorId, key, path, n, data (the file's JSON, optional), slots}.
 function M.onTile(msg, currentAnchor)
   if not M.enabled then return false end
+  if (committedReceipt or msg.planReceipt) and
+      (msg.anchorId ~= committedAnchor or msg.planReceipt ~= committedReceipt) then return false end
   switchAnchor(currentAnchor)
   if msg.anchorId ~= currentAnchor then return false end
   local key = tileKey(msg.anchorId, msg.key)
-  if tiles[key] then dropTile(key) end
   -- the file's JSON in the message (server staging.inline_json: Windows' first read of a file the server just wrote took
   -- up to 0.5 s in the frame), else the file
   local ok, data = true, msg.data
@@ -408,6 +422,15 @@ function M.onTile(msg, currentAnchor)
     lastError = 'unreadable road tile ' .. tostring(msg.path)
     return false
   end
+  local previous = tiles[key]
+  if previous and msg.planReceipt and previous.planReceipt then
+    local nextSeq = tonumber(tostring(msg.planReceipt):match(':(%d+)$'))
+    local oldSeq = tonumber(tostring(previous.planReceipt):match(':(%d+)$'))
+    if msg.planReceipt == previous.planReceipt or (nextSeq and oldSeq and nextSeq <= oldSeq) then return false end
+  end
+  -- A malformed replacement must never destroy still-compatible collision support.
+  if previous then dropTile(key) end
+  supportVersion = supportVersion + 1
   -- pooled shape files: the server's slot paths instead of the tile's own files
   local slots = {}
   for _, what in ipairs({ 'road', 'deck', 'walk', 'walkcol', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'wire', 'tunnel' }) do
@@ -423,12 +446,13 @@ function M.onTile(msg, currentAnchor)
   end
   local road = type(data.road) == 'table' and data.road.shape and type(data.road.pos) == 'table' and data.road
   tiles[key] = { anchor = msg.anchorId, objs = {}, queued = road and 0 or #data.chunks,
-    colliders = type(data.colliders) == 'table' and data.colliders or {}, slots = slots, at = now(), colWant = {} }
+    colliders = type(data.colliders) == 'table' and data.colliders or {}, slots = slots, at = now(), colWant = {},
+    planReceipt = msg.planReceipt }
   sinceChange = stopwatch.new()
   if road then                -- the tile's road mesh replaces its DecalRoads (server/roadmesh.py)
     walkQ[#walkQ + 1] = { key = key, walk = road, what = 'road', tile = tiles[key] }
   else
-    for _, c in ipairs(data.chunks) do createQ[#createQ + 1] = { key = key, chunk = c } end
+    for _, c in ipairs(data.chunks) do createQ[#createQ + 1] = { key = key, chunk = c, tile = tiles[key] } end
   end
   if type(data.props) == 'table' and type(data.props.items) == 'table' then   -- street lights, poles (trees.lua)
     require('beamngEarth/trees').onRows(msg.anchorId, 'p' .. tostring(msg.key), data.props.items, data.props.groups)
@@ -526,6 +550,7 @@ end
 -- Server message `roads_drop` {anchorId, key}. (A ghost goes when covered: releaseGhosts.)
 function M.onDrop(msg)
   local t = tiles[tileKey(msg.anchorId, msg.key)]
+  if t and msg.planReceipt and t.planReceipt ~= msg.planReceipt then return end
   if t and t.ghost then return end
   dropTile(tileKey(msg.anchorId, msg.key))
   sinceChange = stopwatch.new()
@@ -688,6 +713,7 @@ function M.update(gov, currentAnchor, player, view)
   while #createQ > 0 and gov:try('roadChunk') do
     local q = table.remove(createQ, 1)
     local t = tiles[q.key]
+    if t and ((q.tile and q.tile ~= t) or not compatible(t)) then t = nil end
     if t then
       local t0 = now()
       loadMaterials()
@@ -712,6 +738,7 @@ function M.update(gov, currentAnchor, player, view)
     if forced then forced, sinceUrgent, M.urgentWalks = nil, 0, (M.urgentWalks or 0) + 1 end
     local t = tiles[q.key]
     if t and q.tile and q.tile ~= t then t = nil end   -- (an entry of an earlier tile under this key: not made)
+    if t and not compatible(t) and not q.renderOnly and q.what ~= 'road' and q.what ~= 'wire' then t = nil end
     -- (only a colliding mesh waits: a render-only one (q.renderOnly: the drawn sidewalks and buildings beside their lean
     -- collision meshes) cannot catch the car, and holding it hid a whole tile's sidewalks while the car stood in their
     -- box: a roundabout's island band was never drawn, 2026-10-17 Harbor Point)
@@ -949,6 +976,23 @@ function M.readyAround(aid, x, y, r)
   return true
 end
 
+function M.supportRevision() return supportVersion + reloads end
+
+-- A bridge edge requires matching installed deck objects in every crossed tile, after collision reload.
+-- This is a conservative rectangle cover of the edge; extra tiles may withhold an otherwise safe edge.
+function M.supportedSegment(aid, receipt, a, b)
+  if not M.enabled or not receipt or anchorId ~= aid or committedAnchor ~= aid or committedReceipt ~= receipt
+      or collisionDirty or swapQuiet then return false end
+  for x = math.floor(math.min(a[1], b[1]) / M.TILE_M), math.floor(math.max(a[1], b[1]) / M.TILE_M) do
+    for y = math.floor(math.min(a[2], b[2]) / M.TILE_M), math.floor(math.max(a[2], b[2]) / M.TILE_M) do
+      local tile = tiles[tileKey(aid, x .. '_' .. y)]
+      if not tile or tile.ghost or tile.planReceipt ~= receipt or not tile.deck or
+          not tile.colWant.deck or not tile.colAt or (tile.colAt.deck or math.huge) >= lastReloadAt then return false end
+    end
+  end
+  return true
+end
+
 -- Something else made colliding objects near the player (trees.lua's Forest items): rebuild collision at the
 -- next throttled slot.
 function M.requestCollision() collisionDirty = true end
@@ -1021,6 +1065,7 @@ end
 
 -- The level ended: its objects are gone with it.
 function M.reset()
+  committedAnchor, committedReceipt = nil, nil
   -- (the level took the objects: every slot goes)
   for _, t in pairs(tiles) do for _, sl in pairs(t.slots or {}) do slotsGone[#slotsGone + 1] = { sl[1], sl[2], sl[3] } end end
   for _, f in pairs(far) do if f.slot then slotsGone[#slotsGone + 1] = { f.slot[1], f.slot[2], f.slot[3] } end end

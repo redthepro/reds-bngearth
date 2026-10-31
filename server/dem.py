@@ -29,6 +29,7 @@ import threading
 import time
 from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from typing import NamedTuple
 
 import numpy as np
 from PIL import Image
@@ -128,6 +129,12 @@ def _resize(a, size):
     return np.asarray(Image.fromarray(a, mode="F").resize((size, size), Image.BILINEAR))
 
 
+class _TileLoad(NamedTuple):
+    array: object
+    provisional: bool
+    snapshot: int
+
+
 class Dem:
     disk = cachemod.NONE    # the server's cache.Cache (last use per file, the size cap); set by earthd
     ground_filter = True    # surface-model areas: buildings out, deeper zooms from that ground (see above)
@@ -151,6 +158,11 @@ class Dem:
         self._lru = OrderedDict()       # (z, x, y) -> float32 [TILE, TILE]
         self._inflight = {}             # (z, x, y) -> Future
         self._lock = threading.Lock()
+        self.invalidation_epoch = 0
+        self._snapshot_serial = 0
+        self._provisional_keys = OrderedDict()
+        self._provisional_overflow = False
+        self._polar_pending = False
         self.stats = Counter()          # updated from fetch threads; read via stats_snapshot()
         # (z, x, y) -> the provider that served the tile ("mapterhorn" / "aws-terrarium"; None: no
         # data, zeros), for the data credits (credits.py). A few bytes per tile ever loaded.
@@ -394,6 +406,58 @@ class Dem:
         """This load used a stand-in (a failed fetch): its tile is not mirrored."""
         self._local.partial = True
 
+    def _load_tile_result(self, key):
+        """Carry quality with this exact future, not the worker thread/key later.
+
+        Direct _load_tile callers keep their ndarray API. Nested ancestor loads
+        propagate partial quality to the enclosing tile while unrelated pool
+        jobs start with a clean quality flag.
+        """
+        previous = getattr(self._local, "partial", False)
+        self._local.partial = False
+        with self._lock:
+            snapshot = self._snapshot_serial
+        partial = True
+        try:
+            array = self._load_tile(key)
+            partial = bool(getattr(self._local, "partial", False))
+            return _TileLoad(array, partial, snapshot)
+        finally:
+            self._local.partial = previous or partial
+
+    def _remember_result(self, key, result):
+        """Under _lock. Provisional terrain must be retried, never frozen in LRU."""
+        if result.snapshot != self._snapshot_serial:
+            return
+        previous_partial = key in self._provisional_keys
+        if result.provisional:
+            self._provisional_keys[key] = None
+            if len(self._provisional_keys) > 2048:
+                self._provisional_keys.popitem(last=False)
+                self._provisional_overflow = True
+        else:
+            self._provisional_keys.pop(key, None)
+            self._lru[key] = result.array
+            while len(self._lru) > self.mem_tiles:
+                self._lru.popitem(last=False)
+        if result.provisional or previous_partial or self._provisional_overflow:
+            self.invalidation_epoch += 1
+
+    def invalidate_snapshot(self):
+        """Explicit source-version change; old futures cannot repopulate caches.
+
+        Does not claim to detect arbitrary external edits to immutable cached
+        source files, nor shorten provider 404 TTLs.
+        """
+        with self._lock:
+            self._snapshot_serial += 1
+            self.invalidation_epoch += 1
+            self._lru.clear()
+            self._inflight.clear()
+            self._provisional_keys.clear()
+            self._provisional_overflow = False
+            self._polar_pending = False
+
     def _load_tile(self, key):
         """A decoded tile: from the mirror, else made (_make_tile) and, when it is all Mapterhorn's data as it will
         stay (no failover, no fetch failed on the way), written to the mirror."""
@@ -559,11 +623,12 @@ class Dem:
         with self._lock:
             anc = self._lru.get(key)
         if anc is None:
-            anc = self._load_tile(key)      # (in this thread: a pool worker waiting on the pool could deadlock)
+            result = self._load_tile_result(key)  # no pool wait from a pool worker
+            anc = result.array
+            if result.provisional:
+                self._partial()
             with self._lock:
-                self._lru[key] = anc
-                while len(self._lru) > self.mem_tiles:
-                    self._lru.popitem(last=False)
+                self._remember_result(key, result)
         k = 2 ** d
         i = (np.arange(TILE) + 0.5) / k - 0.5
         u = np.clip((x - ax * k) * TILE / k + i, 0, TILE - 1)
@@ -610,7 +675,7 @@ class Dem:
                                                   and not self._inflight[k].done()):
                     futs[k] = self._inflight[k]
                 else:
-                    futs[k] = self._inflight[k] = pool.submit(self._load_tile, k)
+                    futs[k] = self._inflight[k] = pool.submit(self._load_tile_result, k)
                     new.append(k)
         # Outside the lock: the callback runs at once if the future is already done.
         for k in new:
@@ -619,7 +684,11 @@ class Dem:
         if progress:
             progress(done, len(keys))
         for k, fut in futs.items():
-            out[k] = fut.result()
+            result = fut.result()
+            # Future waiters wake before done callbacks finish. Commit the
+            # exact result's epoch before exposing its provisional array.
+            self._finalize_tile(k, fut)
+            out[k] = result.array
             done += 1
             if progress:
                 progress(done, len(keys))
@@ -628,13 +697,15 @@ class Dem:
     def _finish(self, key, fut):
         """Move a finished load from _inflight into the LRU (failures are dropped,
         so the next request retries instead of reusing a stale exception)."""
+        self._finalize_tile(key, fut)
+
+    def _finalize_tile(self, key, fut):
+        """Idempotent completion shared by waiters and asynchronous callbacks."""
         with self._lock:
             if self._inflight.get(key) is fut:
                 del self._inflight[key]
-            if not fut.cancelled() and fut.exception() is None:
-                self._lru[key] = fut.result()
-                while len(self._lru) > self.mem_tiles:
-                    self._lru.popitem(last=False)
+                if not fut.cancelled() and fut.exception() is None:
+                    self._remember_result(key, fut.result())
 
     def block_max(self, z, x, y, block):
         """Highest elevation in every block x block pixel square of tile (z, x, y): a (TILE / block)²
@@ -660,8 +731,15 @@ class Dem:
             px = 40075016.686 * math.cos(math.radians(MAX_LAT)) / (TILE * 2 ** zoom)
             try:
                 out[~valid] = self.polar().sample(lat[~valid], lon[~valid], px)
+                with self._lock:
+                    if self._polar_pending:
+                        self.invalidation_epoch += 1
+                        self._polar_pending = False
             except (netfetch.FetchError, OSError, ValueError) as e:
                 log.warning("polar DEM unavailable (%s): sea level there", e)
+                with self._lock:
+                    self._polar_pending = True
+                    self.invalidation_epoch += 1
         if not valid.any():
             return out.reshape(shape)
         lat, lon = lat[valid], lon[valid]

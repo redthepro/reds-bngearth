@@ -26,6 +26,7 @@ index, so the block-local Torque diagonal parity is the world one, as with 1024�
 torque_split45), and a 128 m move is exactly 64 samples.
 """
 import math
+import io
 import os
 import struct
 import threading
@@ -219,18 +220,36 @@ def block_params(u_min, u_max, q):
     return q, float(z_base), q * 65536
 
 
-def write_png(path, u, q=Q_DEFAULT):
-    """Quantise on the global Q lattice and write the PNG atomically.
-    Returns (Q, zBase, maxHeight, qgrid)."""
+def quantized_grid(u, q=Q_DEFAULT):
+    """The existing global quantization, without publishing a session file."""
     q, z_base, max_height = block_params(float(u.min()), float(u.max()), q)
     g = quantise(u, q) - round(z_base / q)          # integer arithmetic on exact floats
     qgrid = np.clip(g, 0, 65535).astype(np.uint16)
+    return q, z_base, max_height, qgrid
+
+
+def write_png_grid(path, qgrid):
+    """Publish an already quantized grid, with the original row order and codec."""
     img = Image.fromarray(np.ascontiguousarray(qgrid[::-1]))   # flip: row 0 = north (max gy)
     tmp = staging.tmp_for(path)
     # Uncompressed: the game decodes it on the main thread during the terrain-follow commit,
     # and level 0 imports ~7 ms faster than level 1 (43 vs 50 ms for 1024², measured in-game).
     img.save(tmp, format="PNG", compress_level=0)
     staging.replace(tmp, path)
+
+
+def png_bytes(qgrid):
+    """The same PNG encoding, for a materialized compiled artifact."""
+    stream = io.BytesIO()
+    Image.fromarray(np.ascontiguousarray(qgrid[::-1])).save(stream, format="PNG", compress_level=0)
+    return stream.getvalue()
+
+
+def write_png(path, u, q=Q_DEFAULT):
+    """Quantise on the global Q lattice and write the PNG atomically.
+    Returns (Q, zBase, maxHeight, qgrid)."""
+    q, z_base, max_height, qgrid = quantized_grid(u, q)
+    write_png_grid(path, qgrid)
     return q, z_base, max_height, qgrid
 
 
@@ -246,6 +265,14 @@ def write_ter(path, qgrid, idx, materials):
     swaps it in with terrainFile + postApply: ~11 ms for 512² and collision follows without a
     reloadCollision (docs/research/2026-10-12-engine-limits-and-worldgen.md §7), against ~30 ms of
     importMaps + reloadCollision and a ~20 ms physics frame."""
+    tmp = staging.tmp_for(path)
+    with open(tmp, "wb") as f:
+        f.write(ter_bytes(qgrid, idx, materials))
+    staging.replace(tmp, path)
+
+
+def ter_bytes(qgrid, idx, materials):
+    """The existing TER v9 encoder, without a session-path side effect."""
     n = qgrid.shape[0]
     lay = np.zeros((n, n), np.uint8) if idx is None else np.array(idx, np.uint8)
     # the outermost samples are holes (TER_HOLE): the engine lights a block's edge cells as if it repeated
@@ -253,16 +280,14 @@ def write_ter(path, qgrid, idx, materials):
     # the opposite one (in-game 2026-10-13); the edge ring under them (0.3 m lower) shows instead. No
     # collision there: the edge guard keeps the car tens of metres inside.
     lay[0, :] = lay[-1, :] = lay[:, 0] = lay[:, -1] = TER_HOLE
-    tmp = staging.tmp_for(path)
-    with open(tmp, "wb") as f:
-        f.write(struct.pack("<BI", TER_VERSION, n))
-        f.write(np.ascontiguousarray(qgrid, "<u2").tobytes())
-        f.write(np.ascontiguousarray(lay).tobytes())
-        f.write(struct.pack("<I", len(materials)))
-        for name in materials:
-            b = name.encode()
-            f.write(struct.pack("<B", len(b)) + b)
-    staging.replace(tmp, path)
+    data = bytearray(struct.pack("<BI", TER_VERSION, n))
+    data.extend(np.ascontiguousarray(qgrid, "<u2").tobytes())
+    data.extend(np.ascontiguousarray(lay).tobytes())
+    data.extend(struct.pack("<I", len(materials)))
+    for name in materials:
+        b = name.encode()
+        data.extend(struct.pack("<B", len(b)) + b)
+    return bytes(data)
 
 
 def heights(qgrid, z_base, max_height):
@@ -286,7 +311,7 @@ def height_at(qgrid, z_base, max_height, cx, cy, x, y, square=SQUARE):
 
 
 def generate(frame, elev_fn, path, cx=0.0, cy=0.0, ground_at=(0.0, 0.0), q=Q_DEFAULT, size=SIZE, keep=None,
-             chunks=None):
+             chunks=None, png_writer=None):
     """Build the size² block centred at (cx, cy) with height quantum q and write it to path.
     groundZ is the terrain height at ground_at (None if that point is outside the block). keep (a
     dict, optional) receives "lat", "lon" and "u" of the grid ([gy, gx], gy = north) and write_png's
@@ -295,7 +320,7 @@ def generate(frame, elev_fn, path, cx=0.0, cy=0.0, ground_at=(0.0, 0.0), q=Q_DEF
         u = grid_u(frame, elev_fn, cx, cy, size, keep)
     else:
         u, _ = grid_u_chunked(frame, elev_fn, cx, cy, size, chunks, keep)
-    q, z_base, max_height, qgrid = write_png(path, u, q)
+    q, z_base, max_height, qgrid = (write_png if png_writer is None else png_writer)(path, u, q)
     if keep is not None:
         keep["u"] = u
         keep["qgrid"] = qgrid

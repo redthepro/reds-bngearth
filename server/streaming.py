@@ -14,6 +14,44 @@ DRIVE_LEAD = 6.0
 FEEDBACK_TTL = 3.0
 MIN_SCALE = 0.25
 BACKLOG_TARGET = 64             # tiles waiting on the game's import budget
+PENDING_BYTES = 64 << 20
+INSTALL_MS = 256.0
+JOB_BYTES = 8 << 20             # conservative admission reservation, separate from payload bytes
+CRITICAL_BYTES = 32 << 20
+RETRY_S = 0.1
+
+
+def arrival(tile, focus, velocity):
+    """Earliest straight-line arrival at a tile's safety envelope (seconds)."""
+    speed = math.hypot(*velocity)
+    if speed < 1.0:
+        return tile.distance(*focus)
+    x0, y0, x1, y1 = tile.bbox
+    dx, dy = (x0 + x1) / 2 - focus[0], (y0 + y1) / 2 - focus[1]
+    along = (dx * velocity[0] + dy * velocity[1]) / speed
+    return max(0.0, along - DRIVE_RADIUS - tile.size * 0.71) / speed if along >= 0 else math.inf
+
+
+def pressure(value):
+    """Bound untrusted negotiated feedback. Receipt is not installation/release."""
+    if not isinstance(value, dict):
+        return None
+    out = {}
+    for key, cap in (("feedbackSeq", 2**53 - 1), ("receivedSeq", 2**53 - 1),
+                     ("pendingBytes", 1 << 40), ("installMs", 1e7)):
+        v = value.get(key)
+        if not finite_number(v) or v < 0 or v > cap:
+            return None
+        if key != "installMs" and int(v) != v:
+            return None
+        out[key] = v
+    return out
+
+
+def payload_cost(info, tex_px=0):
+    """Payload plus decoded texture allowance; not a measured engine-memory bound."""
+    size = max(0, int(info.bytes)) + max(0, int(info.tex_bytes))
+    return size + (max(0, int(tex_px)) ** 2 * 4 if info.material is not None else 0)
 
 
 def priorities(tiles, focus, velocity, view_focus, cone):

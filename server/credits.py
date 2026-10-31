@@ -98,6 +98,7 @@ FEATURES = {
     "map:Overture": "Overture Maps", "map:OpenStreetMap": "OpenStreetMap", "map:Microsoft ML Buildings": "Microsoft",
     "map:TomTom": "TomTom", "map:Esri Community Maps": "Esri", "map:Google Open Buildings": "Google",
     "map:USGS Lidar": "USGS Lidar", "map:doi:10.5281/zenodo.8174931": "Shi et al. (East Asia buildings)",
+    "land:glc-fcs10": "GLC_FCS10 (Liangyun Liu, Xiao Zhang; CC BY 4.0)",
     "land:esa-worldcover": "ESA WorldCover", "canopy:meta-wri-chm": "Meta & WRI",
     "sea:noaa": "NOAA NCEI", "bridge:nbi": "FHWA NBI", "bridge:wikidata": "Wikidata",
     "air:ourairports": "OurAirports", "grav:egm2008": "NGA EGM2008",
@@ -205,6 +206,16 @@ def feature_ids(conn):
                     ids.add("land:esa-worldcover")
                 elif pid == "meta-wri-chm":
                     ids.add("canopy:meta-wri-chm")
+    if veg_on and hasattr(s.veg, 'provenance'):
+        dlat = FEATURE_NEAR_M / 110540.0
+        dlon = FEATURE_NEAR_M / (111320.0 * max(0.1, math.cos(math.radians(lat))))
+        for key in mapcells.cells_for_bbox(lat - dlat, lon - dlon, lat + dlat, lon + dlon):
+            for record in s.veg.provenance(key):
+                provider = record.get('provider_id', record.get('id'))
+                if provider == 'glc_fcs10':
+                    ids.add('land:glc-fcs10')
+                elif provider in ('esa_worldcover', 'esa-worldcover'):
+                    ids.add('land:esa-worldcover')
     sea = getattr(conn, "sea_sent", None)
     if sea and sea[0] == conn.active and sea[1] and sea[1][0]:
         ids.add("sea:noaa")
@@ -367,13 +378,18 @@ class Tracker:
         self.last_check = cr.clock()
         self.checks += 1
         try:
-            msg = cr.message(conn, self.msg["ids"] if self.msg else ())
-        except Exception:               # a bug must not stop the connection
-            log.exception("credits failed")
-            return
-        if msg is not None and msg != self.msg:
-            self.msg = msg
-            conn.send(msg)
+            try:
+                msg = cr.message(conn, self.msg["ids"] if self.msg else ())
+            except Exception:           # a bug must not stop the connection
+                log.exception("credits failed")
+                return
+            if msg is not None and msg != self.msg:
+                self.msg = msg
+                conn.send(msg)
+        finally:
+            # Attribution metadata can take variable time. Space completed checks
+            # (and actual sends), rather than subtracting that work from the wait.
+            self.last_check = cr.clock()
 
     def close(self):
         if self.timer is not None:

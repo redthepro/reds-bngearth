@@ -365,9 +365,10 @@ local function activateWorld()
   applyHorizon()
 end
 
-local function sendCommits(anchorId, cx, cy)
+local function sendCommits(anchorId, cx, cy, tr)
   net.send({ type = 'commit_anchor', anchorId = anchorId })
-  net.send({ type = 'commit_terrain', anchorId = anchorId, cx = cx, cy = cy })
+  net.send({ type = 'commit_terrain', anchorId = anchorId, cx = cx, cy = cy,
+    planReceipt = tr and tr.planReceipt, activationId = tr and tr.activationId, lifecycle = 'activated' })
 end
 
 -- Teleport: switch to a ready anchor and place the player at its origin.
@@ -438,9 +439,11 @@ local function commitTeleport(msg)
   st.anchor, st.anchorId, st.anchorKey = geodesy.newAnchor(msg.lat, msg.lon), msg.anchorId, msg.anchorKey
   st.anchorSession, st.resync = st.sessionId, false
   mpanchor.announceOwn(msg.lat, msg.lon)
-  st.block, st.terrainPending, st.terrainErrorAt = { cx = tr.cx, cy = tr.cy }, nil, nil
+  st.block, st.terrainPending, st.terrainErrorAt = { cx = tr.cx, cy = tr.cy,
+    planReceipt = tr.planReceipt, activationId = tr.activationId, supportComplete = tr.supportComplete }, nil, nil
+  roads.setTerrainReceipt(msg.anchorId, tr.planReceipt)
   edgeguard.newFrame(st.guard)
-  sendCommits(msg.anchorId, tr.cx, tr.cy)
+  sendCommits(msg.anchorId, tr.cx, tr.cy, tr)
   activateWorld()
   st.skyTimer, st.poseTimer = SKY_INTERVAL, POSE_INTERVAL -- refresh both right away
   setStatus(string.format('Anchor #%s at %.5f, %.5f (teleport, %.0f ms)', tostring(msg.anchorId),
@@ -475,9 +478,12 @@ local function finishRebase()
   st.anchor, st.anchorId, st.anchorKey = rb.newAnchor, msg.anchorId, msg.anchorKey
   st.anchorSession, st.resync = st.sessionId, false
   mpanchor.announceOwn(st.anchor.lat, st.anchor.lon)
-  st.block, st.terrainPending, st.terrainErrorAt = { cx = tr.cx, cy = tr.cy }, nil, nil
+  st.block, st.terrainPending, st.terrainErrorAt = { cx = tr.cx, cy = tr.cy,
+    planReceipt = ok and tr.planReceipt or nil, activationId = ok and tr.activationId or nil,
+    supportComplete = ok and tr.supportComplete or false }, nil, nil
+  roads.setTerrainReceipt(msg.anchorId, ok and tr.planReceipt or nil)
   edgeguard.newFrame(st.guard)
-  sendCommits(msg.anchorId, tr.cx, tr.cy)
+  if ok then sendCommits(msg.anchorId, tr.cx, tr.cy, tr) end
   activateWorld()
   st.skyTimer, st.poseTimer = SKY_INTERVAL, POSE_INTERVAL
   st.lastRebaseMs, st.lastRebaseWait = rb.phase1Ms + sw(), rb.waited
@@ -560,6 +566,12 @@ local COMMIT_SLOW_MS = 300     -- a commit frame this slow is logged with its ma
 local frameTimer = hptimer and hptimer() or nil
 
 local function commitTerrain(msg)
+  if msg.activationId and st.block and st.block.activationId == msg.activationId then return true end
+  if msg.activationId and st.block and st.block.activationId and st.anchorSession == st.sessionId then
+    local incoming = tonumber(tostring(msg.activationId):match('/(%d+)$'))
+    local active = tonumber(tostring(st.block.activationId):match('/(%d+)$'))
+    if incoming and active and incoming <= active then return false end
+  end
   local sw = stopwatch.new()
   local ok, err, swapped = loadBlock(msg)
   if not ok then
@@ -581,8 +593,11 @@ local function commitTerrain(msg)
   table.insert(st.commits, c)
   if #st.commits > COMMIT_LOG then table.remove(st.commits, 1) end
   st.commitFrames = c
-  st.block = { cx = msg.cx, cy = msg.cy }
-  net.send({ type = 'commit_terrain', anchorId = st.anchorId, cx = msg.cx, cy = msg.cy })
+  st.block = { cx = msg.cx, cy = msg.cy, planReceipt = msg.planReceipt,
+    activationId = msg.activationId, supportComplete = msg.supportComplete }
+  roads.setTerrainReceipt(st.anchorId, msg.planReceipt)
+  net.send({ type = 'commit_terrain', anchorId = st.anchorId, cx = msg.cx, cy = msg.cy,
+    planReceipt = msg.planReceipt, activationId = msg.activationId, lifecycle = 'activated' })
   st.lastFollowMs = sw()
   st.followCount = st.followCount + 1
   log('I', 'beamngEarth', string.format('terrain block now at (%d, %d), %.1f ms', msg.cx, msg.cy, st.lastFollowMs))
@@ -659,7 +674,8 @@ local function onMessage(msg)
       for _, h in ipairs(roads.slotsHeld(farfield.session())) do held[#held + 1] = h end
     end
     net.send({ type = 'hello', protocol = PROTOCOL, format = FORMAT, modVersion = MOD_VERSION,
-      sessions = farfield.heldSessions(), slotSession = farfield.session(), slotsHeld = held })
+      sessions = farfield.heldSessions(), slotSession = farfield.session(), slotsHeld = held,
+      streaming = { lifecycle = 1 } })
     setStatus('Connected to companion server')
   elseif t == '_disconnected' then
     st.pending, st.sessionId, st.terrainPending = nil, nil, nil
@@ -676,6 +692,9 @@ local function onMessage(msg)
     pcall(mpsession.onServerHello)
     pcall(voice.onServerHello)
     farfield.configureReserve(msg.streaming)
+    farfield.configureStreaming(msg.streaming)
+    st.feedbackSeq = 0
+    st.streamingLifecycle = type(msg.streaming) == 'table' and msg.streaming.lifecycle == 1
     st.sessionId = msg.sessionId
     st.refreshLater = nil       -- (a restarted server numbers its anchors from 1 again)
     roads.setSession(msg.sessionId)   -- the road / building tiles' pooled shape files belong to this server
@@ -1117,6 +1136,8 @@ local function updateWorld(dt)
   if st.poseTimer >= POSE_INTERVAL and net.isConnected() and anchorKnown() and not st.rebasing then
     st.poseTimer = 0
     local c = st.cam
+    local pressure = farfield.pressure(gov)
+    st.feedbackSeq = (st.feedbackSeq or 0) + 1
     -- held: previous anchors of this server's session only (the far field's older sessions' anchor
     -- ids are another server's); sessions: every session folder in use
     net.send({ type = 'pose', anchorId = st.anchorId, x = pl.x, y = pl.y, z = pl.z, vx = pl.vx, vy = pl.vy,
@@ -1126,7 +1147,9 @@ local function updateWorld(dt)
       slotsGone = slotsGoneNow(), -- pooled shape slots let go (server/matslots.py)
       foci = poseFoci(),          -- other vehicles' collision islands (collisionfoci.lua; earthd parse_foci)
       streaming = { scale = gov.loading and 1 or gov.scale, frameMs = gov.smoothMs,
-        queued = farfield.queuedCount(), loading = gov.loading },
+        queued = farfield.queuedCount(), loading = gov.loading,
+        feedbackSeq = st.feedbackSeq, receivedSeq = pressure.receivedSeq,
+        pendingBytes = pressure.pendingBytes, installMs = pressure.installMs },
       cam = c and { x = c.x, y = c.y, z = c.z, fx = c.fx, fy = c.fy, fz = c.fz, fovDeg = c.fovDeg, h = c.h } or nil })
   end
 
@@ -1786,7 +1809,9 @@ local function onUpdate(dtReal, dtSim)
     end
     parking.update(st.anchorId, not (st.player and st.player.camera) and st.player or nil, pb, gov)  -- (no car: none parked)
     t = mark('parking', t)
-    navgraph.update(st.anchorId, pb, gov)
+    navgraph.update(st.anchorId, pb, gov, st.streamingLifecycle and {
+      planReceipt = st.block and st.block.planReceipt, supportComplete = st.block and st.block.supportComplete,
+      settled = not roads.swapQuiet(), roads = roads } or nil)
     t = mark('navgraph', t)
     updateSky(dtReal)
     updateGuard()

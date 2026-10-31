@@ -125,6 +125,12 @@ function M.configureReserve(profile)
 end
 
 local pending = {}      -- key -> instance received but not shown yet (current anchor)
+local lifecycle, receivedSeq, lastSwap = false, 0, 0
+
+function M.configureStreaming(profile)
+  lifecycle = type(profile) == 'table' and profile.lifecycle == 1
+  receivedSeq, lastSwap = 0, 0 -- each hello negotiates a new connection's sequence space
+end
 local live = {}         -- key -> shown instance (current anchor), covered or not
 local old = {}          -- 'anchorId/key' -> shown instance of a previous anchor
 local oldCount = 0
@@ -234,6 +240,7 @@ local function slotOf(path) return tonumber(type(path) == 'string' and path:matc
 
 -- An instance that never got an object is gone: its far_tile's slot is reported as such.
 local function instGone(inst)
+  inst.lifecycle = 'released' -- no engine object ever held this instance
   local n = inst.slotSerial and slotOf(inst.shape)
   if n then slotsGone[#slotsGone + 1] = { n, inst.slotSerial, inst.session } end
   inst.slotSerial = nil
@@ -312,6 +319,9 @@ local function newInst(msg, seq)
     detail = msg.detail == true,
     tex = tonumber(msg.tex), -- texture px (FORMAT 4); nil from a FORMAT 3 server
     slotSerial = tonumber(msg.slotSerial), -- a pooled shape file's send serial (server/matslots.py)
+    installBytes = math.max(0, math.min(8 * 1024 * 1024, tonumber(msg.installBytes) or 1500000)),
+    streamSeq = tonumber(msg.streamSeq),
+    lifecycle = 'prepared',
     mat = nil, matFailed = false, -- mat: the material name this instance holds a reference to
     id = nil, queued = true, loaded = false, failed = false, shown = false, doomed = false,
     cover = 'none', coverOff = 0, coverHide = false, coverAnim = nil, -- cover state and its target
@@ -548,6 +558,7 @@ local function doom(inst, hideNow)
     inst.hidden = true
   end
   inst.doomed, inst.grp, inst.coverAnim = true, nil, nil
+  inst.lifecycle = 'retiring'
   moving[inst] = nil
   if inst.queued then inst.queued = false; nQueued = nQueued - 1 end
   if inst.id and park(inst) then return end
@@ -742,6 +753,7 @@ local function startGroup(g, cam)
     if a.queued then a.queued = false; nQueued = nQueued - 1 end -- failed before its import
     live[a.key] = a
     a.shown = true
+    a.lifecycle = a.failed and 'failed' or 'activated'
     a.cover = coverOf(a)
     a.coverOff, a.coverHide = coverTarget(a, a.cover)
   end
@@ -787,6 +799,11 @@ end
 -- messages
 
 function M.onTile(msg)
+  if lifecycle then
+    local seq = tonumber(msg.streamSeq)
+    if not seq or seq ~= math.floor(seq) or seq <= receivedSeq or seq > 9007199254740991 then return end
+    receivedSeq = seq -- receipt alone does not remove queued installation pressure
+  end
   if msg.anchorId ~= anchorId then -- late tile of a previous anchor (sent before our commit reached the server)
     if msg.anchorId ~= nil then lossy[msg.anchorId] = true end
     local n = tonumber(msg.slotSerial) and slotOf(msg.shape)
@@ -815,6 +832,11 @@ end
 
 function M.onSwap(msg)
   if msg.anchorId ~= anchorId then return end
+  if lifecycle then
+    local id = tonumber(msg.id)
+    if not id or id ~= math.floor(id) or id <= lastSwap then return end
+    lastSwap = id
+  end
   local g = { id = msg.id, add = {}, remove = {}, state = 'wait', msgIn = tonumber(msg.dIn), msgOut = tonumber(msg.dOut) }
   for _, k in ipairs(type(msg.add) == 'table' and msg.add or {}) do
     k = tostring(k)
@@ -842,6 +864,9 @@ function M.onRemove(msg)
     return
   end
   local p = pending[key]
+  local last = tonumber(msg.retireThrough)
+  if last and ((p and p.streamSeq and p.streamSeq > last) or
+      (live[key] and live[key].streamSeq and live[key].streamSeq > last)) then return end
   if p then -- prefetch eviction (or an add withdrawn before it was shown)
     pending[key] = nil
     doom(p, true)
@@ -1058,6 +1083,7 @@ switchAnchor = function(newAnchorId, keepOld, blk, newSession)
   groups, activeGroups, moving = {}, 0, {}
   removals, rH, rT = keep, 1, #keep
   anchorId = newAnchorId
+  lastSwap = 0
   if newSession ~= nil and newSession ~= session then
     lossy = {} -- anchor ids of the previous session mean nothing to the new server
     session = newSession
@@ -1127,6 +1153,17 @@ end
 
 -- Pending engine imports, maintained as tiles enter/leave the queues (pose feedback must stay cheap).
 function M.queuedCount() return nQueued end
+
+function M.pressure(gov)
+  local bytes, ms = 0, 0
+  for _, inst in pairs(pending) do
+    if inst.queued and not inst.doomed then
+      bytes = bytes + inst.installBytes
+      ms = ms + ((gov and gov.est and gov.est[kindOf(inst)]) or 4)
+    end
+  end
+  return { receivedSeq = receivedSeq, pendingBytes = bytes, installMs = ms }
+end
 
 local function pendingMainCount()
   local n = 0
@@ -1294,6 +1331,7 @@ function M.update(gov, dt, cam, player)
       inst.queued = false
       nQueued = nQueued - 1
       inst.importMs = now() - t1 -- shown by the dev tools' mini-map
+      inst.lifecycle = inst.failed and 'failed' or 'installed'
       gov:charge(kind, inst.importMs)
       units = units + 1
       imported = true
@@ -1404,6 +1442,7 @@ function M.forget()
   mainQ, mH, mT, preQ, pH, pT, nQueued = {}, 1, 0, {}, 1, 0, 0
   groups, activeGroups, removals, rH, rT = {}, 0, {}, 1, 0
   anchorId, doneReceived, block, session = nil, false, nil, nil
+  lifecycle, receivedSeq, lastSwap = false, 0, 0
   matOf, doomedAnchor, doomedSession, doomedFolder = {}, {}, {}, {}
   spares, spareQ, sH, sT, nSpares = {}, {}, 1, 0, 0
   slotHolder, holderPath = {}, {}

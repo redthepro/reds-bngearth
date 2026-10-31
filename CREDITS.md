@@ -187,3 +187,28 @@ weather). The pause-menu integration follows the pattern of the TAA Standalone m
 
 License notices ship in `mod/beamng_earth/art/voice/licenses/`, including with the
 executable's bundled mod files and the BeamMP client ZIP.
+# Optional prepared semantic evidence (BeamNG Earth 2 development)
+
+- © OpenStreetMap contributors; OSM US Layercake (ODbL-1.0).
+  [Layercake highways](https://layercake.openstreetmap.us/layers/highways/),
+  derived from OpenStreetMap under the Open Database License. Prepared cells
+  retain the exact source ETag and available OSM way versions/timestamps.
+- GLC_FCS10 / ESA WorldCover (CC BY 4.0).
+  GLC_FCS10 2023, [Zenodo record 14729665](https://zenodo.org/records/14729665)
+  and its publisher colormap; [ESA WorldCover](https://esa-worldcover.org)
+  remains the coarse fallback. These are land-cover functional types, not a
+  species inventory. Existing Meta/WRI canopy-height attribution still applies.
+  Creators listed by the GLC record: Liangyun, Liu; Xiao, Zhang.
+- SoilGrids, ISRIC (CC BY 4.0).
+  [SoilGrids](https://docs.isric.org/globaldata/soilgrids/) 0–5 cm mean sand,
+  clay and coarse-fragment predictions; retain the input raster checksum and
+  property units. Soil predictions are not tyre-friction measurements.
+- EC JRC/Google Global Surface Water, Copernicus terms.
+  [JRC Global Surface Water](https://global-surface-water.appspot.com/download),
+  v1.5, EC JRC/Google. Occurrence and seasonality periods are recorded separately.
+  Source: EC JRC/Google. Used as supplementary persistence evidence, not exact
+  shorelines, depth, or live water level.
+  Pekel, Cottam, Gorelick and Belward (2016), Nature 540, 418–422,
+  [doi:10.1038/nature20584](https://doi.org/10.1038/nature20584).
+
+Visible functional vegetation credit: GLC_FCS10 (Liangyun Liu, Xiao Zhang; CC BY 4.0).

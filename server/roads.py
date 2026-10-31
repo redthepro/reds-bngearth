@@ -3908,11 +3908,15 @@ class Tracker:
         the car (earthd camera_away): the tiles round it are wanted too, after the car's (which carry what it drives
         on and hits). foci: other vehicles' collision foci (x, y, r, trees) (the mod's collisionfoci.lua): the tiles
         within r + TILE / 2 of each are wanted too, after the car's and the camera's, and kept within r + TILE."""
-        if aid != self.aid:
+        receipt = conn.ensure_plan_receipt() if hasattr(conn, "ensure_plan_receipt") else None
+        if receipt is not None and getattr(conn, "active_receipt", None) != receipt:
+            return  # retain compatible installed support until the new terrain installation commits
+        if aid != self.aid or receipt != getattr(self, "receipt", None):
             for f in self.futs.values():
                 f.cancel()
             self.aid, self.sent, self.building, self.futs = aid, set(), set(), {}
             self.empty, self.retry, self.fails = set(), {}, {}
+            self.receipt = receipt
         if self.pool is None:
             from concurrent.futures import ThreadPoolExecutor
             self.pool = ThreadPoolExecutor(BUILD_PER_POSE, thread_name_prefix="roads-tile")
@@ -3936,8 +3940,14 @@ class Tracker:
             return min(tile_distance(k[0], k[1], f[0], f[1]) for f in foci)
         want.sort(key=lambda k: (2, focus_d(k)) if k in others else (1, cam_key(k)) if k in seen else (0, car_key(k)))
         for tx, ty in want[:max(0, BUILD_PER_POSE - len(self.building))]:   # in flight at most (vegetation.Tracker)
+            submit = getattr(getattr(conn, "s", None), "support_submit", None)
+            fut = submit(self.pool, "roads", build, aid, tx, ty) if submit else loop.run_in_executor(
+                self.pool, build, aid, tx, ty)
+            if fut is None:
+                break  # bounded denial stays wanted and retries at the next pose
             self.building.add((tx, ty))
-            fut = self.futs[(tx, ty)] = loop.run_in_executor(self.pool, build, aid, tx, ty)
+            self.futs[(tx, ty)] = fut
+            fut._plan_receipt = receipt
             fut.add_done_callback(lambda f, k=(tx, ty), a=aid: self._built(conn, a, k, f))
         def far(k):
             return tile_distance(k[0], k[1], x, y) > DROP_M and (not view or tile_distance(k[0], k[1], *view) > DROP_M) \
@@ -3945,18 +3955,23 @@ class Tracker:
         drop = [k for k in self.sent if k not in wanted and far(k)]
         for k in drop:
             self.sent.discard(k)
-            conn.send({"type": "roads_drop", "anchorId": aid, "key": f"{k[0]}_{k[1]}"})
+            conn.send({"type": "roads_drop", "anchorId": aid, "key": f"{k[0]}_{k[1]}",
+                       **({"planReceipt": receipt} if receipt is not None else {})})
         if self.empty:
             self.empty = {k for k in self.empty if k in wanted or not far(k)}
         if self.retry:
             self.retry = {k: t for k, t in self.retry.items() if t > now}
 
     def _built(self, conn, aid, key, fut):
-        if aid != self.aid:                 # (an old anchor's: the same key may be in flight for the new one)
+        if aid != self.aid or self.futs.get(key) is not fut:
             return
         self.building.discard(key)
         self.futs.pop(key, None)
         if fut.cancelled():
+            return
+        current = conn.ensure_plan_receipt() if hasattr(conn, "ensure_plan_receipt") else None
+        if (getattr(fut, "_plan_receipt", None) != current
+                or (current is not None and getattr(conn, "active_receipt", None) != current)):
             return
         try:
             res = fut.result()
@@ -3980,6 +3995,8 @@ class Tracker:
         path, n = res
         self.sent.add(key)
         m = {"type": "roads_tile", "anchorId": aid, "key": f"{key[0]}_{key[1]}", "path": path, "n": n}
+        if current is not None:
+            m.update(planReceipt=current, lifecycle="prepared")
         out_dir = getattr(getattr(conn, "s", None), "out_dir", None)
         data = staging.inline_json(out_dir, path) if out_dir else None
         if data is not None:                # (the game need not open the file: staging.inline_json)

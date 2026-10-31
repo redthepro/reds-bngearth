@@ -1,0 +1,2 @@
+# Optional offline-only raster normalization. Not required by earthd lookup.
+rasterio==1.5.2

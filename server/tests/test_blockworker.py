@@ -85,6 +85,8 @@ class NavgraphTest(unittest.TestCase):
         want = navgraph.build(FRAME, [md.cell(k).layers.get("roads") for k in keys], elev, (0.0, 0.0), None,
                               decks={}, widths=None, left_hand=False, mph=True)
         want["rules"] = rules
+        self.assertIs(got.pop("bridgeSupportKnown"), False,
+                      "a process-local snapshot cannot prove installed bridge collision compatibility")
         self.assertEqual(got, json.loads(json.dumps(want, separators=(",", ":"))))
         self.assertGreater(n_nodes, 2)
         self.assertEqual((n_nodes, n_edges), (len(want["nodes"]), len(want["edges"])))

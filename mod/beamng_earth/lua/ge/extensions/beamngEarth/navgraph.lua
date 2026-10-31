@@ -91,7 +91,7 @@ end
 -- Pure-ish (needs vec3): the stock map's node table of graph g clipped to box b: {name = {pos, radius,
 -- links = {other = edge}}}, every edge shared by both ends (double-sided) with in/out nodes, positions and radii.
 -- Returns nodes, node count, edge count and the cuts: { x, y } of each kept node with a road to a node left out.
-function M.toNodes(g, b, edgeM, leftHand, yieldEvery)
+function M.toNodes(g, b, edgeM, leftHand, yieldEvery, bridgeReady)
   local nodes, nn, ne = {}, 0, 0
   local keep = {}
   local steps = 0
@@ -126,7 +126,8 @@ function M.toNodes(g, b, edgeM, leftHand, yieldEvery)
         cutList[#cutList + 1] = { keep[k][1], keep[k][2] }
       end
     end
-    if keep[a] and keep[bb] and a ~= bb and not M.tooSteep(keep[a], keep[bb]) then
+    local supported = not e[9] or (g.bridgeSupportKnown == true and bridgeReady and bridgeReady(keep[a], keep[bb]))
+    if keep[a] and keep[bb] and a ~= bb and not M.tooSteep(keep[a], keep[bb]) and supported then
       local A, B = node(a), node(bb)
       if not A.links[bb] then
         local edge = { drivability = e[7], oneWay = e[3] == 1, lanes = M.lanes(e[4], e[5], leftHand),
@@ -153,10 +154,19 @@ end
 
 function M.onMessage(msg, currentAnchor)
   if not M.enabled or msg.anchorId ~= currentAnchor then return false end
+  local serial = tonumber(msg.serial)
+  if not serial or serial ~= math.floor(serial) or serial < 0 then return false end
+  if graph and graph.anchor == currentAnchor then
+    local incoming = tonumber(tostring(msg.planReceipt or ''):match(':(%d+)$')) or 0
+    local old = tonumber(tostring(graph.planReceipt or ''):match(':(%d+)$')) or 0
+    if incoming < old or (incoming == old and serial <= (tonumber(graph.serial) or 0)) then return false end
+  end
   local ok, g = pcall(jsonDecode, readFile(msg.path) or '')
   if not ok or type(g) ~= 'table' or type(g.nodes) ~= 'table' or type(g.edges) ~= 'table' then return false end
   graph = { anchor = msg.anchorId, serial = msg.serial, nodes = g.nodes, edges = g.edges,
-            signals = type(g.signals) == 'table' and g.signals or {}, rules = type(g.rules) == 'table' and g.rules or nil }
+            signals = type(g.signals) == 'table' and g.signals or {}, rules = type(g.rules) == 'table' and g.rules or nil,
+            planReceipt = msg.planReceipt, bridgeSupportKnown = g.bridgeSupportKnown }
+  for _, e in ipairs(g.edges) do if e[9] then graph.hasBridges = true; break end end
   dirty = true
   return true
 end
@@ -518,13 +528,16 @@ M.PREP_MS = 2.0
 M.PREP_YIELD = 256
 local prep = nil        -- { graph, box, co, result }
 
-local function buildNodes(b)
+local function buildNodes(b, support)
   if not prep or prep.graph ~= graph or not (prep.box == b or (prep.box and b and prep.box[1] == b[1] and prep.box[2] == b[2]
       and prep.box[3] == b[3] and prep.box[4] == b[4])) then
     setRules()
     local g, box, rh = graph, b and { b[1], b[2], b[3], b[4] } or nil, M.rules.rightHandDrive
     prep = { graph = g, box = box, co = coroutine.create(function()
-      return { M.toNodes(g, box, M.EDGE_M, rh, M.PREP_YIELD) }
+      local bridgeReady = support and support.roads and function(a, bb)
+        return a and bb and support.roads.supportedSegment(g.anchor, g.planReceipt, a, bb)
+      end or nil
+      return { M.toNodes(g, box, M.EDGE_M, rh, M.PREP_YIELD, bridgeReady) }
     end) }
   end
   if prep.result then return prep.result end
@@ -551,8 +564,32 @@ local function room(gov)
   return false
 end
 
-function M.update(aid, b, gov)
+function M.update(aid, b, gov, support)
   if not M.enabled or not graph then return end
+  if support and (not support.settled or support.supportComplete ~= true or
+      not support.planReceipt or graph.planReceipt ~= support.planReceipt) then
+    -- Previously applied routes cannot outlive the collision receipt they depended on.
+    -- The existing main-thread reset can hitch; safety withdrawal does not wait for optional budget.
+    if applied then
+      pendingSignals = nil
+      local sw = stopwatch.new()
+      if apply(b, { {}, 0, 0, {} }) then applied, prep, dirty = nil, nil, true end
+      if gov and gov.noteFrame then gov:noteFrame(sw()) end
+    end
+    return
+  end
+  if support and support.roads then
+    local revision = support.roads.supportRevision()
+    if graph.supportRevision ~= revision then
+      if applied and applied.bridges then
+        pendingSignals = nil
+        local sw = stopwatch.new()
+        if apply(b, { {}, 0, 0, {} }) then applied = nil end
+        if gov and gov.noteFrame then gov:noteFrame(sw()) end
+      end
+      graph.supportRevision, prep, dirty = revision, nil, true
+    end
+  end
   local t0 = os.clock()
   if applied and t0 - lastGuard >= M.GUARD_S then
     lastGuard = t0
@@ -580,8 +617,10 @@ function M.update(aid, b, gov)
   if not (dirty or foreign) then return end
   local t = os.clock()
   if t - lastApply < M.MIN_GAP_S and not foreign then return end
-  local pre = buildNodes(b)
+  local pre = buildNodes(b, support)
   if not pre or not room(gov) then return end
+  if support and (not support.settled or graph.planReceipt ~= support.planReceipt or
+      (support.roads and graph.supportRevision ~= support.roads.supportRevision())) then prep = nil; return end
   prep = nil
   lastApply = t
   dirty, foreign = false, false
@@ -589,7 +628,8 @@ function M.update(aid, b, gov)
   local okA = apply(b, pre)
   if gov and gov.noteFrame then gov:noteFrame(sw()) end
   if okA then
-    applied = { anchor = aid, serial = graph.serial, box = b and { b[1], b[2], b[3], b[4] } or {} }
+    applied = { anchor = aid, serial = graph.serial, box = b and { b[1], b[2], b[3], b[4] } or {},
+      bridges = graph.hasBridges }
     if not started then
       startTraffic()
       respawnAll = false

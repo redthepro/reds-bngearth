@@ -148,8 +148,47 @@ def _deck_z(decks, fid, x, y):
     return None if best is None else best[1]
 
 
+def _bridge_supported(xy, deck_parts):
+    """Conservative continuous coverage, not a few sampled support points."""
+    for points, heights in deck_parts:
+        points, heights = np.asarray(points), np.asarray(heights)
+        if (points.ndim != 2 or points.shape[1] != 2 or len(points) != len(heights) or
+                not np.isfinite(points).all() or not np.isfinite(heights).all()):
+            return False
+    for start, end in zip(xy[:-1], xy[1:]):
+        delta = end - start
+        length = float(np.hypot(*delta))
+        if length < 1e-8:
+            continue
+        direction = delta / length
+        intervals = []
+        for points, heights in deck_parts:
+            points, heights = np.asarray(points, np.float64), np.asarray(heights, np.float64)
+            if points.ndim != 2 or points.shape[1] != 2 or len(points) != len(heights):
+                continue
+            for index, (a, b) in enumerate(zip(points[:-1], points[1:])):
+                if not np.isfinite(heights[index:index + 2]).all() or not np.isfinite([a, b]).all():
+                    continue
+                offsets = np.vstack((a - start, b - start))
+                along = offsets @ direction
+                perpendicular = np.abs(offsets[:, 0] * direction[1] - offsets[:, 1] * direction[0])
+                if np.any(perpendicular >= 1.5):
+                    continue
+                lo, hi = max(0., float(along.min())), min(length, float(along.max()))
+                if hi > lo:
+                    intervals.append((lo, hi))
+        reached = 0.
+        for lo, hi in sorted(intervals):
+            if lo > reached + 1e-6:
+                break
+            reached = max(reached, hi)
+        if reached < length - 1e-6:
+            return False
+    return True
+
+
 def build(frame, feats_list, elev, centre, urban_fn=None, window=WINDOW_M, decks=None, widths=None, left_hand=False,
-          mph=True):
+          mph=True, require_bridge_support=False):
     """{"nodes": {name: [x, y, z, radius]}, "edges": [[in, out, oneway, lanes_out, lanes_in, speed m/s,
     drivability, radius]]} of the drivable roads in the square of half size `window` around centre (x, y) of
     the anchor frame. feats_list: the "roads" mapgeom.Features of the cells around (duplicates across cells
@@ -180,6 +219,20 @@ def build(frame, feats_list, elev, centre, urban_fn=None, window=WINDOW_M, decks
             fid = str(feats.ids[i])
             if spec is None or fid in seen:
                 continue
+            import osmtags
+            if osmtags.motor_access(feats, i) is False:
+                continue  # explicit motor restriction; collision geometry is unchanged
+            if require_bridge_support:
+                supported = True
+                for bridge in roads.bridge_parts(feats, i):
+                    ll_bridge = np.asarray(bridge, np.float64)
+                    east, north, _ = frame.geodetic_to_enu(ll_bridge[:, 1], ll_bridge[:, 0], 0.0)
+                    xy_bridge = np.c_[east, north]
+                    supported = _bridge_supported(xy_bridge, (decks or {}).get(fid, ()))
+                    if not supported:
+                        break
+                if not supported:
+                    continue  # Never publish a ground-level substitute for an unsupported bridge.
             seen.add(fid)
             parts = feats.parts(i)
             if not parts or not parts[0]:
@@ -255,6 +308,12 @@ def build(frame, feats_list, elev, centre, urban_fn=None, window=WINDOW_M, decks
             full.append(order[-1])
             xy = np.stack([np.interp(full, s, p[:, 0]), np.interp(full, s, p[:, 1])], 1)
             names = [marks[v] for v in full]
+            bridge_ranges = [(a, b) for a, b, kind in roads.level_ranges(feats, i) if kind == "bridge"]
+            if require_bridge_support:
+                heights = [_deck_z(decks or {}, fid, point[0], point[1]) for at, point in zip(full, xy)
+                           if any(a <= at / L <= b for a, b in bridge_ranges)]
+                if any(height is None or not np.isfinite(height) for height in heights):
+                    continue
             # this road's edge attributes
             mid = 0.5
             driv = DRIVE[spec.cls][0]
@@ -290,6 +349,8 @@ def build(frame, feats_list, elev, centre, urban_fn=None, window=WINDOW_M, decks
                 legal = road_mph(feats, i, spec, mph, at=(full[j] + full[j + 1]) / (2 * L)) * MPH
                 target = min(legal, float(profile[j]), float(profile[j + 1]))
                 edges.append([a, b, 1 if direction else 0, lo, li, round(target, 2), driv, round(w / 2, 2)])
+                if any(a <= full[j + 1] / L and b >= full[j] / L for a, b in bridge_ranges):
+                    edges[-1].append(True)  # dependent on an actual solid deck, checked again by the client
                 edge_fids.append(fid)
     import islands
     ring = islands.ring_directions(ring_cands, left_hand)
@@ -459,22 +520,37 @@ class Tracker:
 
     def on_pose(self, conn, aid, x, y, loop, build):
         """build(aid, x, y, serial) runs in a worker and returns (vfs path, nodes, edges) or None."""
+        receipt = conn.ensure_plan_receipt() if hasattr(conn, "ensure_plan_receipt") else None
+        if receipt != getattr(self, "receipt", None):
+            self.centre = None
         if self.building:
             return
         if aid == self.aid and self.centre is not None and \
                 max(abs(x - self.centre[0]), abs(y - self.centre[1])) < self.rebuild_m:
             return
-        self.building = True
         self.serial += 1
         serial = self.serial
         if self.pool is None:
             from concurrent.futures import ThreadPoolExecutor
             self.pool = ThreadPoolExecutor(1, thread_name_prefix="navgraph")
-        fut = loop.run_in_executor(self.pool, build, aid, x, y, serial)
+        submit = getattr(getattr(conn, "s", None), "support_submit", None)
+        fut = submit(self.pool, "nav", build, aid, x, y, serial) if submit else loop.run_in_executor(
+            self.pool, build, aid, x, y, serial)
+        if fut is None:
+            return
+        self.building = True
+        fut._plan_receipt = receipt
+        self.future = fut
         fut.add_done_callback(lambda f: self._built(conn, aid, (x, y), serial, f))
 
     def _built(self, conn, aid, centre, serial, fut):
+        if getattr(self, "future", fut) is not fut:
+            return
         self.building = False
+        current = conn.ensure_plan_receipt() if hasattr(conn, "ensure_plan_receipt") else None
+        receipt = getattr(fut, "_plan_receipt", None)
+        if (receipt != current or getattr(conn, "active", aid) != aid or fut.cancelled()):
+            return
         try:
             res = fut.result()
         except Exception as e:      # map data not at hand: the next pose asks again
@@ -484,6 +560,10 @@ class Tracker:
         if res is None:
             return
         self.aid, self.centre = aid, centre
+        self.receipt = receipt
         path, n, m = res
-        conn.send({"type": "navgraph", "anchorId": aid, "path": path, "cx": round(centre[0], 1),
-                   "cy": round(centre[1], 1), "nodes": n, "edges": m, "serial": serial})
+        message = {"type": "navgraph", "anchorId": aid, "path": path, "cx": round(centre[0], 1),
+                   "cy": round(centre[1], 1), "nodes": n, "edges": m, "serial": serial}
+        if receipt is not None:
+            message.update(planReceipt=receipt, lifecycle="prepared")
+        conn.send(message)
