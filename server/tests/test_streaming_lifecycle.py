@@ -156,6 +156,7 @@ class AsyncLifecycleTest(unittest.IsolatedAsyncioTestCase):
         epoch, built = [0], []
         a = SimpleNamespace(id=1)
         s = SimpleNamespace(anchors={}, surface=None, grading=False, hm_sent=deque(), sid='fixture',
+                            warm_place=lambda *a: 0, gas_stations=False,
                             vfs_dir='/fixture', layout=SimpleNamespace(block=512),
                             dem=SimpleNamespace(stats_snapshot=lambda: {}))
         s.new_anchor, s.snap = lambda lat, lon: a, lambda x: x

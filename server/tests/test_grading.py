@@ -12,7 +12,7 @@ import geodesy  # noqa: E402
 import grading  # noqa: E402
 import mapcells  # noqa: E402
 import roads  # noqa: E402
-from test_roads import features, LAT, LON, FRAME  # noqa: E402
+from test_roads import features, rules, LAT, LON, FRAME  # noqa: E402
 
 
 class ProfileTest(unittest.TestCase):
@@ -25,6 +25,32 @@ class ProfileTest(unittest.TestCase):
         sm = grading.smooth_profile(bumpy, 2.0, 12.0)
         self.assertLess(np.abs(sm - ramp)[20:-20].max(), 0.02, "short bumps smoothed away")
         self.assertEqual(len(sm), len(s))
+
+    def test_a_bridge_deck_in_the_data_is_no_hump(self):
+        # GitHub #271: the elevation data had a bridge deck 8.5 m up in 3 samples (6 m) where it crosses over the road
+        s = np.arange(0, 300, 2.0)
+        ground = 50.0 + 0.01 * s
+        spiked = ground.copy()
+        spiked[74:77] += 8.5
+        xy = np.stack([s, np.zeros(len(s))], axis=1)
+        plan = grading._plan(xy, spiked, roads.Spec(7.0, "paved", False, "residential"))
+        self.assertLess(float(np.max(plan.z - np.interp(plan.xy[:, 0], s, ground))), 0.2)
+        steps = grading.median_profile(ground, 2.0, grading.MEDIAN_M)
+        self.assertTrue(np.allclose(steps, ground), "a constant grade stays, ends included")
+
+    def test_the_parts_of_a_road_meet_at_one_height(self):
+        # a road on a 20 % grade split in two at a junction (GitHub #266, BR-381): each part's smoothed profile keeps
+        # the grade to its end and ends at the ground's height there, so the two meet without a step (mirrored at the
+        # ends, one ended 1.3 m under the ground and the next began 0.8 m over it)
+        s = np.arange(0, 400, 2.0)
+        ground = 0.20 * s + 0.3 * np.sin(s / 9.0)
+        a, b = grading.smooth_profile(ground[:101], 2.0, 12.0), grading.smooth_profile(ground[100:], 2.0, 12.0)
+        self.assertAlmostEqual(a[-1], ground[100], places=9)
+        self.assertAlmostEqual(b[0], ground[100], places=9)
+        ramp = 0.20 * s
+        self.assertTrue(np.allclose(grading.smooth_profile(ramp, 2.0, 12.0), ramp, atol=1e-9), "the grade to the ends")
+        short = 0.1 * np.arange(6) * 2.0        # shorter than the kernel: the line through its ends
+        self.assertTrue(np.allclose(grading.smooth_profile(short, 2.0, 12.0), short, atol=1e-9))
 
 
 class CrestTest(unittest.TestCase):
@@ -335,6 +361,91 @@ class GraderTest(unittest.TestCase):
         self.assertEqual(len(two), 2)
 
 
+class ChainTest(unittest.TestCase):
+    """A road split at a junction (GitHub #266, BR-381): its parts are smoothed as one road."""
+
+    @staticmethod
+    def hill(la, lo):           # a 20 % grade, with a 1.5 m bump in the data right at the junction
+        e, n, _ = FRAME.geodetic_to_enu(la, lo, 0.0)
+        e = np.asarray(e)
+        return 100.0 + 0.20 * e + 0.4 * np.sin(e / 11.0) + 1.5 * np.exp(-(e / 6.0) ** 2)
+
+    def plans(self, on):
+        # A ends at the junction (0, 0) where B goes on straight and C branches off 31 degrees to the left
+        f = features([[(-300, 0), (0, 0)], [(0, 0), (300, 0)], [(0, 0), (200, 120)]], ["primary"] * 3)
+        with unittest.mock.patch.object(grading, "CHAIN_ON", on):
+            g = grading.Grader(FRAME, FakeMD(f), self.hill)
+            return {fid: p for fid, p in g._cell_plans(mapcells.cell_of(LAT, LON))}
+
+    def test_the_parts_meet_at_one_height(self):
+        p = self.plans(True)
+        a, b = p["id000"], p["id001"]
+        self.assertLess(abs(a.z[-1] - b.z[0]), 0.01)
+        self.assertLess(a.z[-1], 101.0, "smoothed through the junction: the bump in the data mostly gone")
+        alone = self.plans(False)
+        self.assertGreater(alone["id000"].z[-1], 101.4, "smoothed alone: each part pinned to the bump's top")
+        # the grade goes on through the junction (the plans' last / first 8 m)
+        ga = (a.z[-1] - a.z[-3]) / np.hypot(*(a.xy[-1] - a.xy[-3]))
+        gb = (b.z[2] - b.z[0]) / np.hypot(*(b.xy[2] - b.xy[0]))
+        self.assertAlmostEqual(ga, gb, delta=0.03)
+
+    def test_the_straightest_part_goes_on(self):
+        import fast
+        cand = [np.array([[0.0, 0.0], [300.0, 0.0]]), np.array([[200.0, 120.0], [0.0, 0.5]]),
+                np.array([[0.0, 0.0], [0.0, 300.0]]), np.array([[0.0, 0.0], [250.0, 1.0]])]
+        cxy = np.concatenate(cand)
+        coff = np.array([0, 2, 4, 6, 8], np.int64)
+
+        def ext(roads, cls=(1, 1, 1, 1), reach=50.0):
+            pts, off = fast._ef.chain_extensions(
+                cxy, coff, np.array(cls, np.int64), np.array(roads, np.int64), np.array([[0.0, 0.0]]),
+                np.array([[1.0, 0.0]]), np.array([1], np.int64), np.array([7], np.int64), np.array([reach]),
+                1.0, 35.0, 10.0)
+            return np.asarray(pts[off[0]:off[1]])
+        line = ext([1, 2, 3, 4])
+        self.assertEqual(line[0].tolist(), [0.0, 0.0])
+        self.assertAlmostEqual(float(np.hypot(*np.diff(line, axis=0).T).sum()), 50.0, places=6)
+        self.assertLess(abs(line[-1, 1]), 1e-6, "the straight one, not the 31 degree branch")
+        self.assertAlmostEqual(float(ext([7, 2, 3, 4])[-1, 1]), 0.2, places=4, msg="not its own road: the next straightest")
+        self.assertGreater(float(ext([7, 2, 3, 7])[-1, 1]), 10.0, "then the branch, its end at the node, turned")
+        self.assertEqual(len(ext([7, 7, 3, 7])), 0, "never a 90 degree turn")
+        self.assertEqual(len(ext([1, 2, 3, 4], cls=(2, 2, 2, 2))), 0, "only roads smoothed alike")
+
+
+class MajorRoadTest(unittest.TestCase):
+    """Motorways and trunks are smoothed more (SIGMA_MAJOR_M); a road ending on one meets it at its height (pins)."""
+
+    @staticmethod
+    def bumpy(la, lo):          # a 4 % grade with a 3 m bump 60 m long (a forest edge in a surface model)
+        e, n, _ = FRAME.geodetic_to_enu(la, lo, 0.0)
+        e = np.asarray(e)
+        return 100.0 + 0.04 * e + 3.0 * np.exp(-((e - 20.0) / 30.0) ** 2)
+
+    def plans(self):
+        # the motorway split at the slip road's junction (0, 0); the slip road leaves at 25 degrees
+        f = features([[(-400, 0), (0, 0)], [(0, 0), (400, 0)], [(0, 0), (180, -84)]], ["motorway"] * 3)
+        f.rules["subclass"] = rules([(2, "link")])
+        g = grading.Grader(FRAME, FakeMD(f), self.bumpy)
+        return {fid: p for fid, p in g._cell_plans(mapcells.cell_of(LAT, LON))}
+
+    def test_major_roads_smoothed_more(self):
+        self.assertEqual(grading.profile_sigma(roads.Spec(7.0, "paved", False, "motorway")), grading.SIGMA_MAJOR_M)
+        self.assertEqual(grading.profile_sigma(roads.Spec(7.0, "paved", False, "motorway", link=True)), grading.SIGMA_M)
+        p = self.plans()
+        a = p["id000"]
+        bump = np.interp(20.0, a.xy[:, 0], a.z) if a.xy[-1, 0] > 20 else np.interp(20.0, p["id001"].xy[:, 0],
+                                                                                    p["id001"].z)
+        self.assertLess(bump - (100.0 + 0.04 * 20.0), 1.6, "most of the bump smoothed out of the motorway")
+
+    def test_a_slip_road_meets_the_motorway(self):
+        p = self.plans()
+        mway, link = p["id001"], p["id002"]
+        self.assertLess(abs(mway.z[0] - p["id000"].z[-1]), 0.01, "the motorway's parts meet")
+        self.assertLess(abs(link.z[0] - mway.z[0]), 0.01, "the slip road ends at the motorway's height")
+        self.assertGreater(abs(link.z[0] - self.bumpy(np.array([LAT]), np.array([LON]))[0]), 0.5,
+                           "not at the bump's height")
+
+
 class OverTunnels(unittest.TestCase):
     """Grader._over_tunnels (earthfast.over_tunnel): over the tube within its half width, from TUNNEL_KEEP_IN_M inside
     its portals."""
@@ -372,11 +483,60 @@ class UnderpassTest(unittest.TestCase):
         f = features([[(-200, 0), (200, 0)], [(0, -20), (0, 20)], [(-200, 300), (200, 300)]],
                      ["residential", "motorway", "residential"], flags=[(1, "is_bridge")])
         g = grading.Grader(FRAME, FakeMD(f), lambda la, lo: np.full(np.shape(la), 10.0))
-        la, lo, _ = FRAME.enu_to_geodetic(np.array([0.0, 150.0, 0.0]), np.array([0.0, 0.0, 300.0]), 0.0)
+        la, lo, _ = FRAME.enu_to_geodetic(np.array([0.0, 195.0, 0.0]), np.array([0.0, 0.0, 300.0]), 0.0)
         out = g.apply(la, lo, np.full(3, 10.0))
         self.assertAlmostEqual(float(out[0]), 10.0 - grading.UNDER_CLEAR_M, delta=0.3, msg="under the deck")
         self.assertAlmostEqual(float(out[1]), 10.0, delta=0.1, msg="back up past the ramp")
+        # the ramp: no steeper than UNDER_GRADE, and no kinks (the grade changes smoothly)
+        xs = np.arange(0.0, 200.0, 2.0)
+        la, lo, _ = FRAME.enu_to_geodetic(xs, np.zeros(len(xs)), 0.0)
+        z = g.apply(la, lo, np.full(len(xs), 10.0))
+        grade = np.diff(z) / 2.0
+        self.assertLessEqual(float(np.abs(grade).max()), grading.UNDER_GRADE + 0.005)
+        self.assertLess(float(np.abs(np.diff(grade)).max()), 0.01, "no kink")
         self.assertAlmostEqual(float(out[2]), 10.0, delta=0.1, msg="another road untouched")
+
+
+class UnderDipTest(unittest.TestCase):
+    def test_a_dip_ends_inside_its_road_part(self):
+        d = np.arange(-80.0, 300.1, 1.0)
+        free = grading.under_dip(d, 4.0)
+        self.assertAlmostEqual(float(free[d == 0][0]), -4.0)
+        self.assertLess(float(free[d == -80][0]), -0.5, "with room the ramp runs on past 80 m")
+        fit = grading.under_dip(d, 4.0, (80.0, 300.0))
+        self.assertAlmostEqual(float(fit[d == -80][0]), 0.0, places=9, msg="the part's start: back up")
+        self.assertAlmostEqual(float(fit[d == 0][0]), -4.0)
+        grade = np.abs(np.diff(fit[d <= 0]))
+        self.assertLessEqual(float(grade.max()), grading.UNDER_MAX_GRADE + 1e-6)
+        self.assertTrue(np.allclose(fit[d > 0], free[d > 0]), "the other side as before")
+        self.assertIsNone(grading.under_dip(d, 4.0, (20.0, 300.0)), "no room even at UNDER_MAX_GRADE")
+
+
+class UnderpassShortfallTest(unittest.TestCase):
+    def test_road_under_gives_way_for_what_the_ramps_could_not_raise(self):
+        """A local road's bridge over a motorway (the motorway never rises): with room for its ramps the overpass rises
+        and the motorway stays; with frontage roads hugging both ends (the ramps held down) the motorway dips under it
+        instead (BR-381 near Pouso Alegre: ~1 m of clearance, the AI car drove into the abutment)."""
+        mway = [(-300, 0), (300, 0)]
+        bridge = [(0, -20), (0, 20)]
+        ramps = [[(0, -260), (0, -20)], [(0, 20), (0, 260)]]
+        frontage = [[(-150, -26), (150, -26)], [(-150, 26), (150, 26)]]
+
+        def motorway_z(lines, classes):
+            f = features(lines, classes, flags=[(1, "is_bridge")])
+            g = grading.Grader(FRAME, FakeMD(f), lambda la, lo: np.full(np.shape(la), 10.0))
+            la, lo, _ = FRAME.enu_to_geodetic(np.array([0.0, 250.0]), np.array([0.0, 0.0]), 0.0)
+            return g.apply(la, lo, np.full(2, 10.0))
+        free = motorway_z([mway, bridge] + ramps, ["motorway", "tertiary", "tertiary", "tertiary"])
+        self.assertAlmostEqual(float(free[0]), 10.0, delta=0.3, msg="the overpass rises: the motorway stays")
+        held = motorway_z([mway, bridge] + ramps + frontage, ["motorway", "tertiary", "tertiary", "tertiary",
+                                                               "residential", "residential"])
+        self.assertLess(float(held[0]), 10.0 - 0.6 * grading.UNDER_CLEAR_M, "ramps held down: the motorway dips")
+        self.assertAlmostEqual(float(held[1]), 10.0, delta=0.1, msg="back up past its ramp")
+        with unittest.mock.patch.object(grading, "UNDER_ANY_ON", False):
+            off = motorway_z([mway, bridge] + ramps + frontage, ["motorway", "tertiary", "tertiary", "tertiary",
+                                                                  "residential", "residential"])
+        self.assertAlmostEqual(float(off[0]), 10.0, delta=0.3, msg="BNE_UNDERPASS_ANY=off: as before")
 
 
 class RacewayKeepTest(unittest.TestCase):

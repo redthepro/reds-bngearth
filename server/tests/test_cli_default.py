@@ -119,7 +119,7 @@ def compute(server_dir):
             out["zooms"] = [a.zooms[lvl] for lvl in range(0, 10)]
             info = await s.terrain(a, snap(300.0), snap(-140.0))
             out["terrain"] = {k: (round(v, 6) if isinstance(v, float) else v)
-                              for k, v in sorted(info.items()) if k not in ("seconds", "stages", "ter")}
+                              for k, v in sorted(info.items()) if k not in ("seconds", "stages", "ter", "_input_receipt")}
             from PIL import Image
             with Image.open(os.path.join(s.out_dir, s.hm_name((a.id, snap(300.0), snap(-140.0))))) as im:
                 out["terrain_png"] = [im.size[0], im.mode, _h(np.asarray(im).tobytes())]

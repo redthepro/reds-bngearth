@@ -37,6 +37,10 @@ for (const name of ['EarthSocial.vue', 'EarthSettings.vue', 'EarthMap.vue']) {
     "'./socialModel.mjs'",
     JSON.stringify(pathToFileURL(path.join(ui, 'socialModel.mjs')).href),
   )
+  code = code.replace(
+    "'./socialBridge.mjs'",
+    JSON.stringify(pathToFileURL(path.join(ui, 'socialBridge.mjs')).href),
+  )
   // Render a deterministic connected fixture without game calls or microphone access.
   const fixture = {
     session: true,
@@ -60,6 +64,8 @@ for (const name of ['EarthSocial.vue', 'EarthSettings.vue', 'EarthMap.vue']) {
         speaking: [3004],
         inputs: ['USB Microphone'],
         outputs: ['Headphones'],
+        deviceDefaults: { input: 'USB Microphone', output: 'Headphones' },
+        deviceActive: { input: 'USB Microphone', output: 'Headphones' },
       },
       state: {
         group: 'test',
@@ -85,7 +91,10 @@ for (const name of ['EarthSocial.vue', 'EarthSettings.vue', 'EarthMap.vue']) {
   if (
     !html.includes('Join global') ||
     !html.includes('Hold to test mic') ||
-    !html.includes('&lt;Player &amp; friends&gt;')
+    !html.includes('&lt;Player &amp; friends&gt;') ||
+    !html.includes('aria-checked="true"') ||
+    !html.includes('Voice On') ||
+    !html.includes('Mic in use: USB Microphone')
   ) {
     throw new Error(
       'Social UI fixture did not render its controls or escaped player names',

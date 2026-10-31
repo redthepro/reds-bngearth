@@ -391,6 +391,52 @@ function M.noteTeleport(lat, lon, name, kind)
   table.insert(recent, 1, e)
   while #recent > M.RECENT_MAX do recent[#recent] = nil end
   save()
+  M.notePosition(e.lat, e.lon, nil, true)      -- (where the car goes now)
+end
+
+------------------------------------------------------------------------------------------
+-- where the car was last ("Where you left off": the user, 2026-10-25, "make sure it saves on game close and save
+-- periodicly in case the game crashes or force closes"). The recent places are where teleports went; driving 30 miles
+-- from there and restarting put the car back at the teleport. Its own small file (the places file's save also redoes
+-- the level select's spawn points): written every POS_EVERY_S at most, once the car has moved POS_MOVE_M, and at once
+-- on a teleport, at level end and game close (force).
+M.POS_FILE = '/settings/beamngEarth_lastpos.json'
+M.POS_EVERY_S = 60
+M.POS_MOVE_M = 100
+local lastPos = nil         -- { lat, lon } as last read or written
+local posRead = false
+local posWrittenAt = -math.huge
+
+function M.lastPosition()
+  if not posRead then
+    posRead = true
+    local read = rawget(_G, 'jsonReadFile')
+    local ok, data = pcall(function() return read and read(M.POS_FILE) end)
+    if ok and type(data) == 'table' then
+      local lat, lon = validLatLon(data.lat, data.lon)
+      if lat then lastPos = { lat = lat, lon = lon } end
+    end
+  end
+  return lastPos
+end
+
+-- The car at (lat, lon) now (clock: seconds, any monotonic clock); force: write whatever the time and distance.
+-- Returns whether it wrote.
+function M.notePosition(lat, lon, clock, force)
+  lat, lon = validLatLon(lat, lon)
+  if not lat then return false end
+  local prev = M.lastPosition()
+  if not force then
+    if (clock or 0) - posWrittenAt < M.POS_EVERY_S then return false end
+    if prev and distance(prev.lat, prev.lon, lat, lon) < M.POS_MOVE_M then return false end
+  end
+  local write = rawget(_G, 'jsonWriteFile')
+  if not write then return false end
+  local e = { lat = round6(lat), lon = round6(lon) }
+  local ok, err = pcall(write, M.POS_FILE, e, true)
+  if not ok or err == false then return false end
+  lastPos, posWrittenAt = e, clock or posWrittenAt
+  return true
 end
 
 -- The name shown for a recent place: its own, else a saved place's within DEDUP_M, else nil.

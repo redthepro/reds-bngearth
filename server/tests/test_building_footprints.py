@@ -123,6 +123,23 @@ class FootprintTest(unittest.TestCase):
         self.assertEqual(items[0][0].min_h, 0)
         self.assert_courtyards_open(items[0])
 
+    def test_lazy_parts_preserve_each_multipolygon_component_and_courtyard(self):
+        polygons = [[rect(x, 10, 80, 80), rect(x+20, 30, 40, 40)] for x in (10, 130)]
+        parent = record(self.frame, 'B', polygons, height=8)
+        parts = [record(self.frame, 'P', polygons, building_id='B', height=8, min_height=0)]
+        items = self.build_items([parent], parts)
+        self.assertEqual(len(items), 2)
+        for item in items:
+            self.assertEqual(len(item[0].holes), 1)
+            self.assert_courtyards_open(item)
+
+    def test_native_road_samples_exclude_overlapping_courtyards_once(self):
+        outer = rect(0, 0, 100, 100)
+        holes = [rect(20, 20, 40, 60), rect(40, 20, 40, 60)]
+        street = np.array([[0, 50], [100, 50]], np.float64)
+        self.assertAlmostEqual(bld.road_through(outer, [street], holes=holes), 40)
+        self.assertAlmostEqual(bld.road_through(outer, [street]), 100)
+
     def test_courtyards_are_clipped_with_bridge_passages(self):
         outer, hole = rect(0, 0, 40, 40), rect(10, 10, 20, 20)
         line = np.array([[20, -10], [20, 50]], np.float64)

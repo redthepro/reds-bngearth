@@ -28,6 +28,14 @@ G.SHARE_PORT = 47621
 -- BeamMP's Private setting on while the server runs (the file is not changed). Private = true, or no AuthKey: on
 -- neither list, players join with Direct Connect. G.LISTED = false keeps a public server off our list too.
 G.LISTED = true
+-- Time of day for everyone on the server: 'real' (each player's real local time where they are, the default), or a
+-- fixed local time 'HH:MM' (e.g. '20:30' for a night server).
+G.TIME = 'real'
+-- With a fixed time: 0 = it stays there; 1 = it runs at real speed; 60 = an hour of the day in every real minute.
+G.TIME_SPEED = 0
+-- Weather for everyone: 'real' (the live weather where each player is, the default), or one of 'clear', 'cloudy',
+-- 'rain', 'storm', 'snow', 'fog'.
+G.WEATHER = 'real'
 -- ===================================================================================================================
 
 G.LIST_URL = 'https://earth.tgforever.net/announce'   -- (the list service, native/serverlist)
@@ -40,6 +48,8 @@ G.STALE_S = 15              -- a player's pose this old: left out
 G.TICK_MS = 2000
 
 G.players = {}              -- pid -> { name, aLat, aLon, lat, lon, t, joinedAt }
+G.WEATHERS = { clear = true, cloudy = true, rain = true, storm = true, snow = true, fog = true }
+G.started = os.time()       -- (a running server clock starts here: every player computes the same time from it)
 G.clock = 0
 
 function G.key(aLat, aLon) return string.format('%.6f,%.6f', aLat, aLon) end
@@ -157,11 +167,22 @@ function G.tick(dt)
   return G.anchors(G.live())
 end
 
--- The settings each player gets (bngeConfig): the sharing port, when it is a usable one.
+-- Pure: G.TIME / G.TIME_SPEED as the clients' clock { hours, speed, epoch } (nil: the real time; a bad value too).
+function G.timeConfig(time, speed, epoch)
+  local h, m = tostring(time or ''):match('^%s*(%d%d?):(%d%d)%s*$')
+  h, m = tonumber(h), tonumber(m)
+  if not h or h > 23 or m > 59 then return nil end
+  return { hours = h + m / 60, speed = math.max(0, tonumber(speed) or 0), epoch = epoch }
+end
+
+-- The settings each player gets (bngeConfig): the sharing port, when it is a usable one; the server's time and weather
+-- (nil: the real ones).
 function G.config()
   local port = tonumber(G.SHARE_PORT)
   port = port and math.floor(port)
-  return { sharePort = (port and port >= 1024 and port <= 65535) and port or nil }
+  local w = tostring(G.WEATHER or 'real'):lower()
+  return { sharePort = (port and port >= 1024 and port <= 65535) and port or nil,
+    time = G.timeConfig(G.TIME, G.TIME_SPEED, G.started), weather = G.WEATHERS[w] and w or nil }
 end
 
 -- Pure: the server's name, port and player cap from ServerConfig.toml's text.
@@ -329,8 +350,20 @@ if MP and MP.RegisterEvent then
   MP.RegisterEvent('onPlayerDisconnect', 'BNGE_onLeave')
   MP.RegisterEvent('BNGE_tick', 'BNGE_tick')
   MP.CreateEventTimer('BNGE_tick', G.TICK_MS)
-  print(string.format('[BeamNG.Earth] plugin loaded (players share world building on TCP port %s)',
-    tostring(G.config().sharePort or 'their own default')))
+  local cfg = G.config()
+  local timeText = 'real'
+  if cfg.time then
+    timeText = tostring(G.TIME) .. (cfg.time.speed > 0 and (' running at x' .. tostring(cfg.time.speed)) or ', fixed')
+  end
+  print(string.format('[BeamNG.Earth] plugin loaded (time %s, weather %s; players share world building on TCP port %s)',
+    timeText, cfg.weather or 'real', tostring(cfg.sharePort or 'their own default')))
+  if tostring(G.TIME or 'real'):lower() ~= 'real' and not cfg.time then
+    print('[BeamNG.Earth] G.TIME "' .. tostring(G.TIME) .. '" is not "real" or HH:MM: the real time is used')
+  end
+  if tostring(G.WEATHER or 'real'):lower() ~= 'real' and not cfg.weather then
+    print('[BeamNG.Earth] G.WEATHER "' .. tostring(G.WEATHER) .. '" is not one of real, clear, cloudy, rain, storm, '
+      .. 'snow, fog: the real weather is used')
+  end
   local okVoice, errVoice = pcall(dofile, 'Resources/Server/BeamNGEarth/lib/voice.lua')
   if not okVoice then print('[BeamNG.Earth] voice unavailable: ' .. tostring(errVoice)) end
 end

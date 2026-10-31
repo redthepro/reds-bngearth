@@ -43,6 +43,7 @@ class CallerGenerationsTest(unittest.TestCase):
         s._plan_active, s._plan_activity_lock = {}, threading.Lock()
         s._plan_generation_anchors = set()
         s.hm, s.hm_inflight = OrderedDict(), {}
+        s.hm_stage = {}
         s.hm_here_lock, s.hm_here = threading.Lock(), 0
         s.hm_pool = ThreadPoolExecutor(2)
         self.addCleanup(s.hm_pool.shutdown, wait=True)

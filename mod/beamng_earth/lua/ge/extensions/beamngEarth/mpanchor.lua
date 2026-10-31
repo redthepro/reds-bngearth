@@ -76,6 +76,12 @@ function M.knows(pid) return remote[tonumber(pid)] ~= nil end
 
 -- Was this remote car's last position (BeamMP's serverVehicleString "pid-vid") beyond FAR_M?
 function M.isFar(sid) return far[sid] == true end
+local nearSince = {}                     -- [serverVehicleString] = M.clock() its packets came in again after far
+-- Seconds since a car that was far sent packets in reach again (math.huge: never far, or long since).
+function M.nearFor(sid)
+  local t = nearSince[sid]
+  return t and (M.clock() - t) or math.huge
+end
 -- Was this remote car ever beyond FAR_M (where the game's physics break and the game deletes it)? (mpsession's restore)
 function M.wasFar(sid) return wasFar[sid] == true end
 function M._noteFar(sid) wasFar[sid] = true end       -- (tests)
@@ -87,7 +93,7 @@ function M.lastPos(sid)
 end
 
 -- (the session's end) the remote anchors forgotten
-function M.reset() remote, xfCache, far, wasFar, lastPos, settleUntil, lastAt = {}, {}, {}, {}, {}, {}, {} end
+function M.reset() remote, xfCache, far, wasFar, lastPos, settleUntil, lastAt, nearSince = {}, {}, {}, {}, {}, {}, {}, {} end
 
 -- A log line once per car and kind every NOTE_S (the session's log tells what happened to a car before an instability)
 M.NOTE_S = 10
@@ -219,6 +225,7 @@ local function wrapHandle(original)
       return
     end
     if far[serverVehicleID] then
+      nearSince[serverVehicleID] = now
       log('I', 'beamngEarth', string.format('BeamMP: car %s near again at %.0f, %.0f, %.0f (speed %.1f m/s)',
         serverVehicleID, p and p[1] or 0, p and p[2] or 0, p and p[3] or 0, decoded.vel and math.sqrt((decoded.vel[1] or 0) ^ 2
         + (decoded.vel[2] or 0) ^ 2 + (decoded.vel[3] or 0) ^ 2) or -1))

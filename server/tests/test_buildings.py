@@ -54,10 +54,19 @@ class RegionStyleTest(unittest.TestCase):
         self.assertEqual(bld.region_style(19.43, -99.13).name, "latin_america")
         self.assertEqual(bld.region_style(35.66, 139.70).name, "east_asia")
         self.assertEqual(bld.region_style(-33.87, 151.21).name, "oceania")
-        self.assertEqual(bld.region_style(30.9, 75.8).name, "warm")
+        self.assertEqual(bld.region_style(30.9, 75.8).name, "south_asia")
+        self.assertEqual(bld.region_style(0.0, 25.0).name, "warm")
+        self.assertEqual(bld.region_style(19.7, 96.1).name, "warm", "Myanmar: not South Asia's style")
         self.assertEqual(bld.brick_share(39.29, -76.61), 0.75)      # the US as before
         self.assertEqual(bld.brick_share(30.0, -90.0), 0.35)
         self.assertEqual(bld.brick_share(40.0, -110.0), 0.15)
+
+    def test_south_asia_houses(self):
+        hs = self.houses(28.61, 77.21)                  # Delhi, India
+        self.assertFalse(any(h.porch for h in hs), "no American porches in South Asia")
+        flat = [h for h in hs if h.roof == "flat"]
+        self.assertGreater(len(flat), 0.85 * len(hs), "overwhelmingly flat terrace roofs")
+        self.assertTrue(all(not str(h.wall).startswith(bld.SIDING) for h in hs), "no wooden clapboard siding")
 
     def test_alpine_houses(self):
         hs = self.houses(46.59, 7.91)
@@ -747,6 +756,42 @@ class TollBoothTest(unittest.TestCase):
         self.assertAlmostEqual(z, 1.0)
         self.assertAlmostEqual(yaw, 310.0, places=0, msg="its local y along the island (40 deg): yaw 40 - 90")
         self.assertIsNone(bld.build([(island, 1.0, 1.2)]), "the island itself not built")
+
+
+
+class RoadLinesTest(unittest.TestCase):
+    def test_a_road_with_a_bridge_in_it_keeps_its_ground_pieces(self):
+        """A motorway segment with a short overpass in it (the A7, GitHub #239): its pieces on the ground are public
+        road lines (they were left out whole, and lorries machine-learned as buildings stood on its lanes)."""
+        from test_roads import FRAME, features
+        f = features([[(-100, 128), (356, 128)]], ["motorway"], levels=[(0, 1.0, 0.45, 0.5)],
+                     flags=[(0, "is_bridge", 0.45, 0.5)])
+        lines = bld.road_lines(FRAME, [f], 0.0, 0.0)
+        self.assertEqual(len(lines), 2, "the two ground pieces either side of the bridge")
+        xs = np.concatenate([ln[:, 0] for ln in lines])
+        self.assertFalse(((xs > 110) & (xs < 120)).any(), "nothing on the bridge's stretch")
+        ring = np.array([[20, 126.8], [35, 126.8], [35, 129.2], [20, 129.2], [20, 126.8]], np.float64)
+        self.assertTrue(bld._ml_false(ring, [], [], lines), "a lorry-sized outline on its lanes: not a building")
+
+
+
+class SteepMachineLearnedTest(unittest.TestCase):
+    """GitHub #242: machine-learned outlines on a volcano's bare slopes (rocks, shadows) are left out; huts are not."""
+    def ring(self, x=100.0, y=100.0, s=6.0):
+        return np.array([[x, y], [x + s, y], [x + s, y + s], [x, y + s], [x, y]], np.float64)
+
+    def test_slope_and_access(self):
+        r = self.ring()
+        flat = np.full(5, 10.0)
+        steep30 = 10.0 + np.tan(np.radians(30)) * r[:, 0]       # 30 deg rising east
+        steep40 = 10.0 + np.tan(np.radians(40)) * r[:, 0]
+        far = [np.array([[0.0, 0.0], [0.0, 10.0]])]             # a path ~140 m away
+        near = [np.array([[90.0, 0.0], [90.0, 300.0]])]          # a path 13 m away
+        self.assertFalse(bld._ml_steep(r, flat, far), "flat: kept")
+        self.assertTrue(bld._ml_steep(r, steep30, far), "30 deg, no way near: out")
+        self.assertFalse(bld._ml_steep(r, steep30, near), "30 deg beside a path: kept (a hut on the trail)")
+        self.assertTrue(bld._ml_steep(r, steep40, near), "40 deg: out wherever it is")
+        self.assertTrue(bld._ml_steep(r, steep30, []), "no ways at all")
 
 
 if __name__ == "__main__":

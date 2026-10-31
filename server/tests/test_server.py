@@ -15,6 +15,8 @@ import tempfile
 import threading
 import time
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 from pathlib import Path
 
 import numpy as np
@@ -26,8 +28,10 @@ import cdae  # noqa: E402
 import streaming  # noqa: E402
 import earthd  # noqa: E402
 import farfield as ff  # noqa: E402
+import geodesy  # noqa: E402
 import heightmap  # noqa: E402
 import imagery  # noqa: E402
+import mapcells  # noqa: E402
 import modsim  # noqa: E402
 from netclient import Client, FarState  # noqa: E402
 
@@ -530,6 +534,23 @@ class ServerTest(ServerHarness):
         for key in set(s.hm_committed) | set(s.hm_sent):
             self.assertIn(key, s.hm)
         s.connections = set()
+
+    def test_a_slow_terrain_request_is_logged_and_still_answered(self):
+        c = self.c
+        self.hello()
+        aid = self.prepare_anchor(1, LAT, LON)["anchorId"]
+        c.send({"type": "commit_anchor", "anchorId": aid})
+        slow = self.server.make_heightmap
+
+        def make(*a, **kw):
+            time.sleep(0.5)
+            return slow(*a, **kw)
+        with mock.patch.object(earthd, "TERRAIN_STUCK_S", 0.2), mock.patch.object(self.server, "make_heightmap", make), \
+                self.assertLogs("earthd", "WARNING") as logs:
+            c.send({"type": "prepare_terrain", "requestId": 3, "anchorId": aid, "cx": 512, "cy": 0})
+            tr, _ = c.until(lambda m: m["type"] == "terrain_ready", timeout=60)
+        self.assertEqual(tr["requestId"], 3)
+        self.assertTrue(any("still building" in m for m in logs.output), logs.output)
 
     def test_prefetch_predicts_from_the_pending_block(self):
         """With a terrain request pending, the mod's next request comes after it commits that one,
@@ -1113,6 +1134,30 @@ class DeleteQueueTest(unittest.TestCase):
         self.assertLess(len(times), 2.0 * earthd.DELETE_MAX_RATE + 5)
         dt = np.diff(times)
         self.assertGreater(float(np.median(dt)), 0.5 / earthd.DELETE_MAX_RATE)
+
+
+class WarmPlaceTest(unittest.TestCase):
+    def test_roads_first_nearest_first(self):
+        # an anchor request fetches the map data of the road tiles around it at once, roads before buildings and water
+        got = []
+
+        class MD:
+            def warm(self, needs, kind="demand"):
+                got.extend(needs)
+                return len(needs)
+        s = SimpleNamespace(mapdata=MD(), sea=object(), buildings=True, road_widths=None,
+                            WARM_ORDER=earthd.Server.WARM_ORDER, WARM_PLACE_LAYERS=earthd.Server.WARM_PLACE_LAYERS)
+        anchor = SimpleNamespace(frame=geodesy.EnuFrame(LAT, LON))
+        n = earthd.Server.warm_place(s, anchor, 0.0, 0.0)
+        self.assertEqual(n, len(got))
+        self.assertEqual(len(got), len(set(got)))
+        layers = [ly for _, ly in got]
+        self.assertEqual(layers, sorted(layers, key=lambda ly: earthd.Server.WARM_ORDER[ly]), "roads first")
+        own = mapcells.cell_of(LAT, LON)
+        self.assertEqual(got[0], (own, "roads"), "the anchor's own cell first")
+        self.assertNotIn((own, "water"), got, "the tiles' own buildings and water: when each starts")
+        self.assertIn((own, "infrastructure"), got)
+        self.assertEqual(earthd.Server.warm_place(SimpleNamespace(mapdata=None), anchor, 0.0, 0.0), 0)
 
 
 class FlagsTest(unittest.TestCase):

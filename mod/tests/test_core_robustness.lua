@@ -194,6 +194,15 @@ serverSend({ type = 'hello', protocol = 4, format = 4, serverVersion = '0.4.0', 
 T.check(pumpUntil(function() return #received('prepare_anchor') == 1 end, 10), 'auto-teleport requested')
 T.check(core.banner().id == 'recovered' and shown() == 'BeamNG.Earth server connected', 'the server came: "BeamNG.Earth server connected"')
 local req = received('prepare_anchor')[1]
+-- the start block fails once (#286: a damaged elevation download): the same teleport is asked again, not given up
+serverSend({ type = 'anchor_error', requestId = req.requestId, error = 'DemUnavailable: undecodable tile' })
+frames(20) -- 1 s
+T.check(#received('prepare_anchor') == 1, 'a failed start block: not re-asked at once')
+T.check(pumpUntil(function() return #received('prepare_anchor') == 2 end, 60 * 8), 'a failed start block is asked again')
+local again = received('prepare_anchor')[2]
+T.check(again.lat == req.lat and again.lon == req.lon and again.cx == req.cx and again.cy == req.cy,
+  'the retry: the same place')
+req = again
 -- a healthy server, but the first anchor not built yet: terrain-follow cannot move the flat start
 -- block at all (it follows anchors only), so the car on it is still held at its edge
 veh.pos, veh.vel = vec3(950, 0, 0.5), vec3(20, 0, 0)

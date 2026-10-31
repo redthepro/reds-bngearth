@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-26",
+  "status": "provisional standalone fixture guardrails; not runtime configuration or engine promises",
+  "scope": "One serial synthetic roads/128-sample terrain fixture, unprofiled Python 3.12.14 on Ryzen 7 7700X / Windows 11; no game",
+  "source_commit": "aae4d6126d65a07315d0b28cc4a81dd68d86280a",
+  "processing_sha256": "9e4f734908d9abd58cc7b80b1f0481cec9af2c319f8c0ab3329f233f4dd490fb",
+  "fixture_sha256": "b2b26bd7a5436fc84aa4d6ebdccfc2830811fc5b6a1b3401ed5d6d7bb3815f3a",
+  "output_sha256": "b0807e31f6696fb03fb6c23600aaf6071c1bcb3002f9647f4fda967f288a169d",
+  "evidence_relative_to_state_root": "benchmarks/01-baseline/measurements/results.json",
+  "observed": {
+    "cold": {
+      "runs": 2,
+      "fixture_wall_s": {"min": 1.572077, "median": 1.584056, "max": 1.596035},
+      "fixture_process_cpu_s": {"min": 1.34375, "median": 1.4375, "max": 1.53125},
+      "external_process_wall_s": {"min": 2.721233, "max": 3.460757},
+      "fake_transport_requests_per_run": 4,
+      "roads_layer_hit": false
+    },
+    "warm_restart": {
+      "runs": 10,
+      "fixture_wall_s": {"min": 0.915185, "median": 0.929796, "max": 0.949014},
+      "fixture_process_cpu_s": {"min": 0.84375, "median": 0.921875, "max": 1.046875},
+      "external_process_wall_s": {"min": 2.788534, "max": 4.236781},
+      "fake_transport_requests_per_run": 0,
+      "roads_layer_hit": true
+    },
+    "memory": {
+      "scope": "Lifetime child-process peak including imports and fixture setup, GetProcessMemoryInfo; not VRAM",
+      "peak_working_set_bytes": {"min": 88166400, "max": 91422720},
+      "peak_commit_bytes": {"min": 610492416, "max": 617607168}
+    },
+    "payload": {"files": 3, "bytes": 51878, "identical_runs": 12},
+    "accounting_overhead": {
+      "scope": "Trivial-function wrapper microbenchmark, 4 fresh processes/mode, 20 batches of 100000 calls per mode",
+      "legacy_median_ns_per_call": 913.7025,
+      "patched_disabled_median_ns_per_call": 948.295,
+      "patched_enabled_median_ns_per_call": 1534.04,
+      "disabled_minus_legacy_ns_per_call": 34.5925,
+      "enabled_minus_disabled_ns_per_call": 585.745,
+      "real_job_or_engine_relative_overhead": null
+    }
+  },
+  "proposed_limits": {
+    "derivation": "Observed maxima times 1.25, rounded upward to simple guardrails. Proposed tolerances, not statistically established acceptance thresholds; no automatic tuning or runtime enforcement.",
+    "cpu_and_latency": {
+      "cold_fixture_wall_s": 2.0,
+      "cold_fixture_process_cpu_s": 2.0,
+      "warm_restart_fixture_wall_s": 1.2,
+      "warm_restart_fixture_process_cpu_s": 1.35,
+      "external_process_wall_s": 5.5,
+      "diagnostic_parallel_processes": 1
+    },
+    "memory": {"lifetime_peak_working_set_bytes": 134217728, "lifetime_peak_commit_bytes": 805306368},
+    "streaming_payload": {
+      "fixture_output_bytes": 65536,
+      "scope": "One fixture's serialized artifact payload only; excludes protocol/network framing. No engine throughput or production queue budget inferred.",
+      "production_bytes_per_second": null,
+      "production_queue_age_s": null,
+      "physics_support_distance_m": null
+    }
+  },
+  "engine_pending": {
+    "reason": "Other session protected; no unoccupied authorized engine session used",
+    "game_version": null,
+    "vehicle_config": null,
+    "resolution_graphics": null,
+    "time_to_safe_drivability_s": null,
+    "frame_p50_ms": null,
+    "frame_p95_ms": null,
+    "frame_p99_ms": null,
+    "install_budget_ms_per_frame": null,
+    "activation_budget_ms": null,
+    "ram_bytes": null,
+    "vram_bytes": null
+  },
+  "limitations": [
+    "Prepared-cache cold only; OS page cache not purged",
+    "Protected other-session background load uncontrolled; only our own benchmarks serialized",
+    "Two cold and ten warm observations do not establish production tails",
+    "Pipeline accounting on/off runs establish output parity; they bypass wrapped worker jobs",
+    "Normalization overlaps source_fetch and process CPU includes all current-process threads; do not sum overlapping stage CPU",
+    "Warm cache is normalized MapData reuse, not persistent compiled artifacts or cross-run road plans",
+    "No game performance, global coverage, collision correctness or speedup claim"
+  ]
+}

@@ -160,23 +160,84 @@ def _outbound(a):
     return (a[1].dir > 0) == bool(a[4])
 
 
-def _is_signalled(arms):
+SIGNAL_NEAR_M = 25.0        # m past the junction's widest arm a mapped traffic signal may stand (OSM maps them at the
+                            # junction's node or at each approach's stop line)
+
+
+def mapped_signals(frame, infra_list):
+    """(n, 2) frame xy of OpenStreetMap's traffic signals (Overture infrastructure transportation/traffic_signals) in
+    infra_list (infrastructure Features of map cells, duplicates taken once); None when no layer could be read (the
+    junctions then fall back to _guess_signalled)."""
+    if not infra_list or all(f is None for f in infra_list):
+        return None
+    seen, ll = set(), []
+    for f in infra_list:
+        if f is None or len(f) == 0:
+            continue
+        cls, sub = f.attrs.get("class"), f.attrs.get("subtype")
+        if cls is None:
+            continue
+        # (whole arrays: a city cell has thousands of infrastructure features and a road tile reads ~9 cells)
+        hit = np.asarray(cls).astype(str) == "traffic_signals"
+        if sub is not None:
+            hit &= np.asarray(sub).astype(str) == "transportation"
+        for i in np.flatnonzero(hit):
+            fid = str(f.ids[i])
+            if fid in seen:
+                continue
+            seen.add(fid)
+            a = f.coord_off[f.ring_off[f.part_off[i]]]
+            b = f.coord_off[f.ring_off[f.part_off[i + 1]]]
+            ll.append(f.lonlat[a:b].mean(axis=0))
+    if not ll:
+        return np.zeros((0, 2))
+    ll = np.asarray(ll, np.float64)
+    e, n, _ = frame.geodetic_to_enu(ll[:, 1], ll[:, 0], 0.0)
+    return np.column_stack([np.asarray(e), np.asarray(n)])
+
+
+def signals_for(md, frame, keys):
+    """mapped_signals of the map cells keys (md: mapdata.MapData), None when their infrastructure cannot be read."""
+    try:
+        return mapped_signals(frame, [md.cell(k, layers=("infrastructure",), kind="demand").layers.get("infrastructure")
+                                      for k in keys])
+    except Exception as e:      # guessed signals rather than no road tile
+        import logging
+        logging.getLogger("earthd.furniture").debug("traffic signals: %s: %s", type(e).__name__, e)
+        return None
+
+
+def _guess_signalled(arms):
     major = [a for a in arms if a[1].cls in MAJOR]
     return len(major) >= 3 or (len(major) >= 2 and len(arms) >= 4)
 
 
-def junction_controls(arms, k, link_ok=None, ring=None):
+def _is_signalled(arms, signals=None):
+    """Traffic lights at this junction: a mapped signal (signals: mapped_signals' points) within SIGNAL_NEAR_M of its
+    widest arm's edge; with no map data (None), where two or more major roads meet (the user, 2026-10-25: lights where
+    there are none)."""
+    if signals is None:
+        return _guess_signalled(arms)
+    if not len(signals):
+        return False
+    c = np.array([sum(float(a[3][0]) for a in arms), sum(float(a[3][1]) for a in arms)]) / len(arms)
+    reach = max(a[1].width for a in arms) / 2 + SIGNAL_NEAR_M
+    return bool((np.hypot(signals[:, 0] - c[0], signals[:, 1] - c[1]) <= reach).any())
+
+
+def junction_controls(arms, k, link_ok=None, ring=None, signals=None):
     """[(arm, G_SIGNAL | G_STOP | G_YIELD)] of a junction's arms (fid, spec, unit vector away, point): signals on
     every arm where two or more major roads meet, stop signs on the minor arms meeting a major road, on the
     stem of a minor T and on half the minor four-ways (hashed by the junction's 8 m cell; k is unused). Shared with
     navgraph.py, so the AI's signals and stop signs are where the props stand. ring: the fids of roundabout rings
     (islands.ring_fids): a junction on a ring (two of its arms) has give-way signs on incoming external arms.
-    The AI graph handles their priority, without installing stop controllers on the ring."""
+    The AI graph handles their priority, without installing stop controllers on the ring. signals: the mapped
+    traffic signals near (mapped_signals; None: guessed by the roads' classes)."""
     if ring and sum(1 for a in arms if a[0] in ring) >= 2:
         return [(a, G_YIELD) for a in arms if a[0] not in ring and not _outbound(a)]
     major = [a for a in arms if a[1].cls in MAJOR]
     minor = [a for a in arms if a[1].cls in MINOR]
-    if _is_signalled(arms):
+    if _is_signalled(arms, signals):
         # one head per way in: none on a one-way arm leaving it, none on a short link to the next signalled
         # junction (a divided road crossing a street is two junctions 20 m apart: the user's report 2026-10-14,
         # Boston St, "way too many traffic lights"); link_ok(arm) says whether that link's far end is signalled
@@ -197,7 +258,7 @@ def junction_controls(arms, k, link_ok=None, ring=None):
     return [(a, G_STOP) for a in minor] if _h01("allway", key) < 0.5 else []
 
 
-def _link_check(junctions):
+def _link_check(junctions, signals=None):
     """link_ok(arm) for junction_controls: is the junction at the other end of arm's road a signalled urban one?"""
     where = {}                                  # (fid, at start) -> the junction's arms
     for arms in junctions.values():
@@ -205,8 +266,14 @@ def _link_check(junctions):
             where[(a[0], a[4])] = arms
     def link_ok(a):
         other = where.get((a[0], not a[4]))
-        return other is not None and len(other) >= 3 and all(x[1].urban for x in other) and _is_signalled(other)
+        return other is not None and len(other) >= 3 and _controlled_here(other, signals) and \
+            _is_signalled(other, signals)
     return link_ok
+
+
+def _controlled_here(arms, signals=None):
+    """Does a junction get signals or signs at all: in town (every arm urban), or anywhere a signal is mapped at it."""
+    return all(a[1].urban for a in arms) or (signals is not None and _is_signalled(arms, signals))
 
 
 SIGN_CLEAR_M = 0.6          # m a junction sign stands clear of every carriageway's edge
@@ -244,27 +311,28 @@ def signal_spot(c, u, right, wide, half, lines):
     return _off_carriageways(c, u, right, wide + 2.5, half + 1.0, near)
 
 
-def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=()):
-    """Signals at urban junctions of two or more major roads (every arm), stop signs at urban junctions
+def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=(), signals=None):
+    """Signals at the junctions with a mapped traffic signal (signals: mapped_signals'; None: at urban junctions of
+    two or more major roads), stop signs at urban junctions
     of minor roads (the minor arms meeting a major road; the stem of a T; half the four-way ones, hashed).
     Each on the approach's right (its left where traffic drives on the left), at the junction's edge, facing
     the drivers who come in. decks: [(centreline (k, 3), half width)] of the bridge decks near (signal_spot)."""
     x0, y0, x1, y1 = box
     rows = []
     junctions = _arms(roads)
-    link_ok = _link_check(junctions)
+    link_ok = _link_check(junctions, signals)
     import islands
     ring = islands.ring_fids(roads)
     lines = [(spec.width / 2, np.asarray(pts, np.float64)[:, :2]) for _, spec, pts, _ in roads if len(pts) >= 2]
     lines += [(float(h), np.asarray(pts, np.float64)[:, :2]) for pts, h in decks if len(pts) >= 2]
     for k, arms in junctions.items():
         on_ring = sum(1 for a in arms if a[0] in ring) >= 2
-        if len(arms) < 3 or (not on_ring and not all(a[1].urban for a in arms)):
+        if len(arms) < 3 or (not on_ring and not _controlled_here(arms, signals)):
             continue
         p = arms[0][3]
         if not (x0 <= p[0] < x1 and y0 <= p[1] < y1):
             continue
-        put = junction_controls(arms, k, link_ok, ring)
+        put = junction_controls(arms, k, link_ok, ring, signals)
         if not put:
             continue
         wide = max(a[1].width for a in arms) / 2
@@ -281,9 +349,11 @@ def junction_props(roads, box, curb_h=0.15, left_hand=False, decks=()):
 
 
 SIGN_MPH = (30, 40, 50, 60, 70)     # speed-limit sign models (trees.lua: Utah's ut_<n>_speed_limit)
-# ... and the round km/h ones (trees.lua: Driver Training's sign_speed<n>kph) where limits are posted in km/h
-# (2026-10-15: Swiss valley roads had American "SPEED LIMIT 50" signs)
-SIGN_KMH = (40, 60, 80, 100)
+# ... and the round km/h ones (trees.lua's speedk<n>, generated by tools/generate_kmh_speed_signs.py) where limits
+# are posted in km/h: every 10 km/h from 30 to 150. A limit rounds to the nearest of them and one off the set
+# (20, say) gets no sign; above 150 it gets the 150.
+SIGN_KMH = (30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150)
+SIGN_NONE = "speedknone"
 SIGN_CLASSES = {"tertiary", "secondary", "primary", "trunk", "unclassified"}
 SIGN_MIN_M = 150.0          # a road segment at least this long gets a sign after each of its ends
 SIGN_IN_M = 30.0            # m past the junction
@@ -300,11 +370,14 @@ def speed_signs(roads, speeds, box, left_hand=False, mph_signs=True):
         mph_v = speeds.get(fid)
         if mph_v is None or spec.cls not in SIGN_CLASSES or spec.oneway or len(line) < 2:
             continue
-        if mph_signs:
+        if not math.isfinite(mph_v) or mph_v <= 0:
+            group = SIGN_NONE if not mph_signs else None
+        elif mph_signs:
             n = int(round(mph_v / 5.0)) * 5
             group = f"speed{n}" if n in SIGN_MPH else None
         else:
-            n = int(round(mph_v * 1.609344 / 10.0)) * 10
+            n = int(round(mph_v * 1.609344, 6) / 10.0 + 0.5) * 10       # half up: round() takes 45 to 40
+            n = min(n, SIGN_KMH[-1])
             group = f"speedk{n}" if n in SIGN_KMH else None
         if group is None:
             continue
@@ -413,7 +486,7 @@ def under_decks(rows, decks, wires=None):
 
 
 def place(roads, walks, box, curb_h=0.15, wires=None, town=False, left_hand=False, speeds=None, mph=True, decks=(),
-          ground=None):
+          ground=None, signals=None):
     """Rows [group, x, y, z, yaw, scale, height, rank] (trees.lua's tile rows) of the lamps and poles of a
     tile box (x0, y0, x1, y1). roads: build_tile's (fid, spec, centreline (k, 3), lon); walks: its sidewalk
     runs (dicts with fid, pts, side, w); decks: the bridge decks over the tile [(centreline (k, 3), half
@@ -494,7 +567,7 @@ def place(roads, walks, box, curb_h=0.15, wires=None, town=False, left_hand=Fals
             put(G_BENCH, BENCH_SPACING, _h01(fid, side, "bench") * BENCH_SPACING, w - 0.45, 0.9,
                 lambda out: _yaw(-out[0], -out[1]) + BENCH_YAW)
             put(G_BIN, BIN_SPACING, _h01(fid, side, "bin") * BIN_SPACING, 0.7, 1.1, lambda out: _yaw(-out[0], -out[1]))
-    signs = junction_props(roads, box, curb_h, left_hand, decks)
+    signs = junction_props(roads, box, curb_h, left_hand, decks, signals)
     ground_jobs.extend((r[1], r[2], r, 3, curb_h) for r in signs)
     rows.extend(signs)
     if speeds:

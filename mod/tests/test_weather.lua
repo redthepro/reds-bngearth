@@ -567,4 +567,18 @@ local any = 0
 for _, v in pairs(env.calls) do any = any + v end
 check(any == 0, 'no weather or gravity outside the BeamNG.Earth level')
 
+-- a BeamMP server's weather preset (G.WEATHER): the same message for every player; real messages wait meanwhile
+do
+  T.check(W.presetMsg('nope') == nil and W.presetMsg('Rain').rainMmH > 0 and W.presetMsg('rain').preset == 'rain',
+    'presets: known names only, any case')
+  for name in pairs(W.PRESETS) do
+    local t = W.targets(W.presetMsg(name))
+    T.check(type(t.coverage) == 'number' and type(t.fogSigma) == 'number', 'preset ' .. name .. ' gives targets')
+  end
+  T.check(W.setPreset('snow') and W.preset() == 'snow', 'snow set')
+  W.onWeather({ cover = { low = 0, mid = 0, high = 0 }, visM = 50000, slTempC = 25, code = 0 })
+  T.check(W.statusLine():find('server: snow', 1, true) ~= nil and W.statusLine():find('snow', 1, true) ~= nil, 'a real message does not replace the server\'s preset: ' .. W.statusLine())
+  T.check(W.setPreset(nil) == false and W.preset() == nil, 'cleared')
+end
+
 T.done('test_weather')

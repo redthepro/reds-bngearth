@@ -1,0 +1,78 @@
+{
+  "schema_version": 2,
+  "example_only": true,
+  "asset_id": "REPLACE_WITH_STABLE_ID",
+  "state": "candidate",
+  "source": {
+    "provider": "sketchfab",
+    "model_uid": "REPLACE_WITH_32_HEX_UID",
+    "model_name": null,
+    "model_url": "https://sketchfab.com/3d-models/REPLACE_WITH_SLUG_AND_UID",
+    "creator_name": null,
+    "creator_url": null,
+    "downloaded_at": null,
+    "archive_sha256": null,
+    "archive_bytes": null,
+    "format": "gltf",
+    "api_revision": "v3"
+  },
+  "license": {
+    "id": null,
+    "label": null,
+    "url": null,
+    "attribution": null,
+    "redistribution_verified": false,
+    "derivatives_verified": false,
+    "verified_at": null,
+    "evidence_sha256": null
+  },
+  "semantic": {
+    "categories": [
+      "roadside.barrier"
+    ],
+    "regions": [],
+    "climate_types": [],
+    "placement_mode": "generic",
+    "verified_location": null,
+    "fallback": "procedural"
+  },
+  "geometry": {
+    "source_units": null,
+    "units": "meters",
+    "source_up_axis": null,
+    "up_axis": "+Z",
+    "forward_axis": "+Y",
+    "handedness": "right",
+    "pivot": "ground_center",
+    "dimensions_m": null,
+    "normalization_version": 1
+  },
+  "runtime": {
+    "format": "collada",
+    "artifact_root": null,
+    "lods": [],
+    "materials": [],
+    "textures": [],
+    "collision": {
+      "mode": "none",
+      "artifact": null,
+      "triangles": 0
+    },
+    "budget_profile": "roadside_small",
+    "approved": false,
+    "fixture_only": false
+  },
+  "processing": {
+    "tool_versions": {},
+    "recipe_version": 1,
+    "changes": [],
+    "prepared_at": null,
+    "output_sha256": null
+  },
+  "quality": {
+    "geometry_validated": false,
+    "textures_validated": false,
+    "engine_validated": false,
+    "warnings": []
+  }
+}

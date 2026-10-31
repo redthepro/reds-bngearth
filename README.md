@@ -2,7 +2,7 @@
 
 This is [redthepro/reds-bngearth](https://github.com/redthepro/reds-bngearth), a fork of
 [TecnaGamer's BeamNG.Earth](https://github.com/TecnaGamer/BeamNG.Earth) focused on terrain loading,
-driving quality, and reliability. **Version 1.8.2 includes upstream 1.6.2-beta plus the changes below.**
+driving quality, and reliability. **Version 1.8.4 includes upstream 1.6.3-beta plus the changes below.**
 The original streamed world, map data integration, and BeamMP foundation come from TecnaGamer and the
 upstream contributors.
 
@@ -12,12 +12,13 @@ real curvature of the Earth.
 
 [Download this fork](https://github.com/redthepro/reds-bngearth/releases) ·
 [Report a fork issue](https://github.com/redthepro/reds-bngearth/issues) ·
-[Installation](#install-and-play) · [Social & voice](#social-and-voice-in-182) ·
+[Installation](#install-and-play) · [Social & voice](#social-and-voice-in-184) ·
+[Contributing with agents](#contributing-with-agents) ·
 [Changelog](CHANGELOG.md) · [Build status](https://github.com/redthepro/reds-bngearth/actions/workflows/release.yml)
 
-## Social and voice in 1.8.2
+## Social and voice in 1.8.4
 
-This release adds **nearby positional voice, a server-wide channel, and private groups** to the fork's
+The fork includes **nearby positional voice, a server-wide channel, and private groups** alongside its
 terrain and driving improvements. Audio capture, Opus encoding, playback, and spatial mixing run in native
 code in the companion. The downloadable Windows EXE and Linux AppImage include the voice client.
 
@@ -26,6 +27,9 @@ server player list, nearby/global/group channel cards, microphone/output selecti
 mutes, and group invitations. The same panel is available inside Earth settings. It ships inside the main
 EXE/AppImage’s mod and the matching BeamMP client ZIP; no extra client mod or Mumble app is needed.
 
+Use the **Voice On / Voice Muted** slider: green enables voice for the session; red disables listening and microphone
+capture. Device menus show the resolved system default and the actual devices in use. **Refresh devices** updates
+the list without opening the microphone; selecting a device applies it immediately while voice is enabled.
 Enable voice for the session to listen to nearby players and your private group. Use **Join global** to listen
 or talk on the server-wide channel; global is off until you join it. Hold a key to talk:
 
@@ -40,7 +44,13 @@ Release, close the panel, switch focus, or wait 10 seconds to stop it. **Audio d
 confirms capture from the selected input; another player hearing you confirms the full connection. Outside this
 explicit test or a granted push-to-talk press, microphone capture is idle. The driving HUD shows microphone use,
 your transmitting channel, and players you are hearing.
-Create a private group there, invite players, accept invitations, or leave; the owner can remove members.
+
+**Verified in game:** local microphone capture was confirmed on Windows on 2026-10-26 using the device selector
+and microphone test. That confirms the input/capture path; testing with another player verifies reception and
+channel routing. Voice remains in development, and reports from different audio devices and multiplayer groups help.
+
+Create a private group there, invite players currently connected to this server, accept invitations, or leave;
+the owner can remove members. Invitations from disconnected players cannot be accepted.
 Groups support 16 members and invitations expire after 30 seconds. Voice is opt-in again after leaving
 multiplayer; releasing the key or losing game focus stops transmission.
 
@@ -67,9 +77,17 @@ to the containers. See the [voice deployment guide](deploy/voice/README.md) for 
 The current companion uses Mumble's encrypted **TLS audio tunnel**; native UDP audio transport is future work.
 The deployment is configured for 100 players, but has not been load tested with 100 players.
 
+**Try the development server:** in the Earth server browser, search for **`github.com/reds-bngearth`**.
+The current server name is **`github.com/reds-bngearth - 1.8.4 Development Test`**. Use the matching companion
+version, then open **Pause → Mods → Earth Social & Voice** to enable voice and select your devices. After an
+update, close the old game and companion, start the new companion, and rejoin so both the native client and
+server-supplied mod are refreshed. Published builds are on [Releases](https://github.com/redthepro/reds-bngearth/releases);
+check [Actions](https://github.com/redthepro/reds-bngearth/actions/workflows/release.yml) if a newer development build
+is still being tested or compiled.
+
 ## What this fork changes
 
-Compared with upstream 1.6.2-beta:
+Compared with upstream 1.6.3-beta:
 
 - **Terrain loading prioritizes driving.** Visual tiles along the car's predicted path are processed before
   other visible tiles, then the surrounding reserve. Follow-up collision blocks wait at most 150 ms for their
@@ -92,8 +110,8 @@ Compared with upstream 1.6.2-beta:
   dawn, with distance fading and limits on how many lights are active or created at once.
 - **A curated Washington, DC landmark pack.** The Washington Monument, Lincoln Memorial, and White House use
   attributed models with reduced distance LODs, prepared textures, and bounded loading. Large mapped buildings
-  such as the Pentagon
-  retain their walls beneath rooftop parts and keep their courtyards open, including in collision geometry.
+  such as the Pentagon retain their walls beneath rooftop parts and keep their courtyards open, including in
+  collision geometry.
   Custom visuals retain mapped building collision; this is a first DC detail pass, with placement still needing
   in-game comparison against the surrounding terrain. See [landmark credits](CREDITS.md#bundled-dc-landmark-models).
 - **More resilient loading.** Invalid cached elevation blocks and map metadata are rebuilt, failed vegetation
@@ -121,8 +139,9 @@ It checks streaming coverage under controlled conditions; actual loading times a
 the PC, location, cache, network, and BeamNG. Personal graphics settings applied to a test PC are not shipped as
 a universal preset in this fork.
 
-Upstream improvements remain included, such as the BeamMP server browser and launcher integration, Windows file
-loading improvements, terrain shadow-stutter fixes, and bridge/tunnel loading repairs. See the
+Upstream 1.6.3-beta improvements remain included: GPS-route prefetch, reusable place caches, gas stations,
+railway detail, Vienna speed signs, configurable server time/weather, selectable game/cache paths and further
+bridge/underpass repairs. The BeamMP browser, launcher integration and terrain shadow-stutter fixes remain. See the
 [changelog](CHANGELOG.md) for the inherited releases and this fork's additions.
 
 Status: beta (see [VERSION](VERSION)); intended for BeamNG.drive 0.40.x. Upstream reports testing on 0.40.3
@@ -132,6 +151,17 @@ with Linux (Vulkan) and Steam Deck. The retained [roadmap](docs/ROADMAP.md) docu
 to discuss the original project and find BeamMP.Earth servers. Please report issues with this fork in
 [this repository](https://github.com/redthepro/reds-bngearth/issues). You can support the original developer through
 [TecnaGamer's donation page](https://ko-fi.com/tecnagamer); that link supports upstream development.
+
+## Contributing with agents
+
+[AGENTS.md](AGENTS.md) explains the runtime boundaries, repository layout, development checks, upstream integration,
+releases and handling of live services. Repository skills live in [.agents/skills](.agents/skills) and cover
+streaming performance, world geometry, social/voice, releases, server operations and feature experiments.
+Agents should load the relevant skill for the task; contributors can use the same guides directly.
+
+New ideas are welcome. The [feature experiment skill](.agents/skills/bngearth-feature-lab/SKILL.md) describes how to
+turn an idea into a small prototype with a measurable outcome, a fallback and a path into the existing app.
+Experimental features should have clear status in the README and retain upstream attribution.
 
 ## Features (working today)
 **The world**
@@ -155,10 +185,15 @@ to discuss the original project and find BeamMP.Earth servers. Please report iss
   traffic islands, roundabouts, rural motorways with shoulders and toll booths; the ground graded under them, with
   retaining walls where a road is cut into a hill (dry stone in the mountains and towns, concrete along major roads)
   and stone parapets along mountain roads' drops; street lights, utility poles with wires, traffic signals,
-  stop signs and speed-limit signs (mph or km/h by country).
+  stop signs and speed-limit signs (mph or km/h by country), traffic lights and sidewalks where OpenStreetMap maps them;
+  railway lines as 3D track (ballast, sleepers and rails, rail bridges on piers, the ground cut and filled for the
+  line) and tram tracks (street track where trams run on the road).
+- Gas stations with pumps, canopies and forecourts in the region's style, where the stock refuel prompt fills the
+  tank.
 - Bridges drawn as their real type (beam, truss, arch, cable-stayed, suspension) with real heights and spans, piers
-  that keep clear of the roads under them; tunnels through hills, with portals, lights and low arches where little
-  is over them.
+  that keep clear of the roads under them and 6 m (20 ft) of headroom over roads where the ground allows; a divided
+  road's two decks joined across a narrow median; tunnels through hills, with portals, lights and low arches where
+  little is over them.
 - Water: the sea with real depth (cars sink), lakes, and rivers kept beside the roads.
 - Airports with graded, marked runways; racetracks (circuits, ovals and pit lanes, with their real banking);
   landmarks such as the pyramids of Giza.
@@ -182,7 +217,11 @@ to discuss the original project and find BeamMP.Earth servers. Please report iss
 - Buildings, sidewalks, curbs and bridge decks are solid (lean collision meshes near the car keep the
   physics' collision rebuilds cheap).
 - Fast teleports: right after a teleport, while you wait, the world server may borrow some of the game's
-  CPU cores (at idle priority) to build the world faster (Linux; `--load-boost off` turns it off).
+  CPU cores (at idle priority) to build the world faster (Linux; `--load-boost off` turns it off). It builds
+  2 to 4 road pieces at once, by your computer's CPU threads and memory.
+- Places you've been load much faster the next time: what was built around you (roads, buildings, the levelled
+  ground, the distant land) is kept on disk, up to 2 GB (the oldest go first; the environment variable
+  `BNE_REVISIT_MB` sets the size, `BNE_REVISIT=off` turns it off).
 - **AI support**: the mod builds BeamNG's road graph (the AI's map) from the real roads around you, with
   lanes, one-way streets, speed limits (mapped, or the country's defaults), the country's driving side and
   road rules, and traffic signals at real junctions. The stock AI, traffic, police and the AI modes in the
@@ -192,19 +231,22 @@ to discuss the original project and find BeamMP.Earth servers. Please report iss
 
 **Multiplayer (BeamMP, in testing)**
 - Play the real world together on a BeamMP server (every player runs the BeamNG.Earth app, which starts BeamMP with
-  the game): BeamNG.Earth servers have their own **BeamNG.Earth** tab in BeamMP's server browser, players who join are
+  the game): BeamNG.Earth servers are their own **BeamNG.Earth** category in BeamMP's server browser, players who join are
   sent to the others, cars show in the right place and with their crash damage in everyone's world, and other players
   show on the world map (see "Multiplayer" below).
 
 **Map and navigation**
 - A level select with famous places and a **Random location** button (it starts you on a road).
 - World map (**M**): pan and zoom the globe, satellite or street map (EOX) with a roads & labels overlay,
-  borders and place names (the **Layers** button), search for addresses and places as you type, teleport
-  anywhere. Works with a controller, laid out like the stock map.
+  borders and place names (the **Layers** button), search for addresses and places as you type (names in the
+  local language in German-, French- and Italian-speaking countries), teleport anywhere. Works with a controller,
+  laid out like the stock map.
 - GPS routes to any destination (OSRM on OpenStreetMap), with the stock route arrows on the road and the route
-  on the game's minimap (bottom left), which shows the roads around you.
+  on the game's minimap (bottom left), which shows the roads around you. The first 20 km (12 miles) of the
+  route's map data and elevation download ahead while you drive, with a progress bar on the map.
 - **Autodrive**: the car drives itself along the GPS route (in lane, legal speed, minding traffic).
-- Saved places and recent places.
+- Saved places and recent places; "Where you left off" in the level select puts you back where you last drove (it
+  is saved as you drive, at teleports and when the game closes).
 
 **Interface and tools**
 - A slim status bar (street, town, country, and under it the loading progress of the ground, roads & buildings, trees and
@@ -280,6 +322,16 @@ the source: unzip it over the old folder and run the installer again).
 downloaded file (or this folder); the map cache is `.cache/beamng-earth` in your home folder (`~/.cache/beamng-earth` on Linux,
 `C:\Users\<you>\.cache\beamng-earth` on Windows).
 
+**The map cache on another drive:** in the game, settings page > Download cache > **Cache folder**: **Change...** opens
+your system's folder window, or type or paste a folder and press **Use**. Or start the app once with `--cache-dir PATH`
+(e.g. a shortcut to `BeamNG.Earth-<version>.exe --cache-dir "D:\BeamNG.Earth cache"`). It is used from the next start
+and remembered; `default` goes back. Move the old cache folder there first to keep what is already downloaded.
+
+**BeamNG.drive installed somewhere else** (not in a Steam library the app finds, e.g. another launcher): the app asks
+where it is the first time (Enter opens your system's folder window, or type or paste the folder) and remembers it;
+`--game-dir PATH` sets it too, `--game-dir default` forgets it. A game folder outside Steam is started directly. On
+Linux, BeamMP's launcher finds the game only in Steam's libraries, so BeamMP isn't started with such a copy.
+
 More detail (traffic, the status bar, reporting problems, troubleshooting): [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 **Compute sharing (optional, for tinkerers):** another computer on your network can build part of the distant
@@ -314,7 +366,7 @@ Player downloads: `python3 tools/build_app.py` builds this system's AppImage / .
 docstring; for the .exe run `tools/build_bootloader.py` first: a bootloader built from source, fewer antivirus
 false positives). Every push to `main` runs the Windows/Linux regression suites, compiles the Rust kernels,
 builds and smoke-tests both executables, and publishes a GitHub release with the matching BeamMP package and
-`SHA256SUMS.txt`. A version bump publishes its named release, such as **`v1.8.2`**. Other commits use
+`SHA256SUMS.txt`. A version bump publishes its named release, such as **`v1.8.4`**. Other commits use
 `v<VERSION>-build.<workflow-run-number>.g<commit-sha>`. The selected version is embedded in the downloads.
 Failed tests or builds prevent publication. Separate pushes keep their own builds; an older build finishing late
 cannot replace the current main build as Latest. Preview/alpha/rc versions remain prereleases.
@@ -353,18 +405,21 @@ BeamNG.Earth runs on [BeamMP](https://beammp.com/) servers (in testing): drive t
 **Joining a server**
 1. Start the BeamNG.Earth app (the same version as the server's). It starts BeamMP with the game: the official BeamMP
    launcher, unchanged (BeamMP's code is AGPL-3.0, [github.com/BeamMP](https://github.com/BeamMP)). If BeamMP isn't
-   installed, the app asks once: **Yes / No / Don't ask again**.
+   installed, the app asks once: **Yes / No / Don't ask again / Have it already** (the last one asks where your
+   launcher is: Enter opens your system's file window, or type or paste the path; `--beammp-launcher PATH` sets it
+   too, and it is kept for the next starts). To change it later: settings page > Multiplayer > **BeamMP launcher**.
    - **Windows:** Yes downloads BeamMP's official launcher from BeamMP's GitHub releases (checked against the checksum
      BeamMP publishes; Windows Firewall then asks once whether it may use the network: allow it).
    - **Linux and Steam Deck:** BeamMP publishes no Linux download, so Yes builds its launcher on your computer from
      BeamMP's source, the newest version that passed BeamMP's own tests, in an Ubuntu container (podman or docker:
      SteamOS has podman; about a minute on a Steam Deck). A launcher you built yourself is used when found
-     (`~/BeamMP-Launcher`, or set `BEAMMP_LAUNCHER`).
+     (a `BeamMP-Launcher` folder in your home folder or one folder down, e.g. `~/Games/BeamMP-Launcher`, or
+     `~/.local/share`; or answer "Have it already", or set `BEAMMP_LAUNCHER`).
    - The setting **Start BeamMP with BeamNG.Earth** (Pause menu > Mods > BeamNG.Earth, Multiplayer) turns this off or
      back on; `--no-beammp` starts the game without BeamMP once.
 2. In the game: main menu > More > BeamMP, log in (an account or a guest).
-3. Open the **BeamNG.Earth** tab in BeamMP's sidebar: the servers running BeamNG.Earth, with a Join button. They are
-   listed only there, for players who have BeamNG.Earth. A private server: Direct Connect with its address (the
+3. Pick the **BeamNG.Earth** category in BeamMP's server browser: the servers running BeamNG.Earth (search,
+   filters, favorites and details as for the other servers), the official server at the top. They are listed only there, for players who have BeamNG.Earth. A private server: Direct Connect with its address (the
    [Discord server](https://discord.gg/tgf) has some). Every player needs the BeamNG.Earth app running: each builds the
    world on their own computer.
    (Starting the BeamMP launcher yourself first still works: the app then starts just the world server.)
@@ -372,7 +427,8 @@ BeamNG.Earth runs on [BeamMP](https://beammp.com/) servers (in testing): drive t
 Leaving a server turns BeamNG.Earth back on (joining one switches your other mods off).
 
 You are sent to where the others are. Cars show in the right place in everyone's world; other players show on the
-world map (**M**) as green arrows; players far away (another country) are hidden until you meet. Crash damage: a crash
+world map (**M**) as green arrows when they opt into map visibility; players far away (another country) are hidden
+until you meet. Crash damage: a crash
 you watch keeps the damage your own game worked out; a car that crashed out of your sight takes on its owner's damage
 (broken parts and dents) once it comes within about 0.6 miles.
 
@@ -390,18 +446,22 @@ trust with the group's credentials. No manual `BNGE_PEER_TOKEN` is needed for Be
 
 **Hosting a server:** download `BeamNG.Earth-BeamMP-Server-<version>.zip` from the
 [Releases](https://github.com/redthepro/reds-bngearth/releases) page and follow the guide inside
-(`BeamNG.Earth-README.md`). In short: unzip it into a BeamMP server's folder, set
-`Map = "/levels/beamng_earth/info.json"` in `ServerConfig.toml`, forward the server's port (TCP and UDP) for players
+(`BeamNG.Earth-README.md`). Stop BeamMP, unpack the release into a staging directory and run
+`python install_server.py --server-dir /path/to/BeamMP` to install/update its Earth resources with backups.
+Set `Map = "/levels/beamng_earth/info.json"` in `ServerConfig.toml`, forward the server's port (TCP and UDP) for players
 over the internet, and start it (its log shows `[BeamNG.Earth] plugin loaded`). Which list it is on:
-`Private = false` with your AuthKey puts it on the BeamNG.Earth list (the in-game tab) and the plugin keeps it off
+`Private = false` with your AuthKey puts it on the BeamNG.Earth list (the in-game category) and the plugin keeps it off
 BeamMP's own public list, so players without BeamNG.Earth never see it; `Private = true`, or no AuthKey: on no list,
 players use Direct Connect. The plugin lists the server once a minute with `curl` (Linux, and Windows 10 and later).
-Update the server zip with every release: it carries the mod the server sends to players. The players' sharing port (47621) is
+Update the server zip with every release: it carries the mod the server sends to players. The server's time and weather for everyone
+(`G.TIME`: real or a fixed / running time such as `'20:30'`; `G.WEATHER`: real or clear, cloudy, rain, storm, snow,
+fog) are set near the top of `Resources/Server/BeamNGEarth/main.lua`. The players' sharing port (47621) is
 `G.SHARE_PORT` near the top of `Resources/Server/BeamNGEarth/main.lua`. The server needs no world data and
 little CPU. From the source, `python3 tools/package.py --beammp` builds the same zip.
 
 ## Data sources and attribution
-The repository contains only code; all map data is downloaded at runtime and cached locally.
+World map data is downloaded at runtime and cached locally. The repository also contains bundled, attributed
+landmark models and generated sign assets; see [CREDITS.md](CREDITS.md) for their sources and licenses.
 - Imagery: state and national orthophoto services where they are open (Maryland, a dozen more US
   states, Switzerland, France, Spain, the Netherlands, Germany's states, Poland (GUGiK), Japan, parts of Australia and
   Canada, and more), USDA NAIP and USGS The National Map (public domain) in the US, and Sentinel-2
@@ -419,3 +479,7 @@ credit each one asks for, is in [CREDITS.md](CREDITS.md).
 ## License
 Code: MIT, see [LICENSE](LICENSE). BeamNG.drive is a trademark of BeamNG GmbH; this is an unofficial
 fan project and contains no BeamNG assets.
+
+### Earth 2 test candidate
+
+The 1.8.5-rc.1 candidate adds shared terrain preparation, bounded scheduling, opt-in compiled-terrain caching and provenance-aware data adapters. The semantic asset resolver remains development groundwork; it is not connected to gameplay, and no new Sketchfab catalog model is approved. See [integration notes and test limits](docs/earth2/INTEGRATION.md). This candidate needs in-game testing.

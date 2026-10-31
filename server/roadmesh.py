@@ -27,6 +27,8 @@ LIFT = {"base": 0.0, "gutter": 0.005, "mark": 0.01}   # m above the physics grou
 
 
 def layer_of(chunk):
+    if chunk.get("layer") in LIFT:             # a chunk naming its own (rails.py: sleepers over ballast, rails over both)
+        return chunk["layer"]
     m = chunk["m"]
     if m.startswith("line_") or m.startswith("crossing") or m == "m_metal_grid_drain":
         return "mark"
@@ -362,6 +364,9 @@ PARAPET_H = 0.9         # ... this high over the road
 PARAPET_COVER_DZ = 2.0  # m: another deck's surface within this height at an edge point: no parapet there
 PARAPET_MIN_M = 8.0     # m: a parapet run shorter than this is left out (stubs stood in the Queensboro Bridge's lanes
                         # where its two directions' decks meet and the cover test missed a few points, 2026-10-17)
+MEDIAN_JOIN_M = 6.0     # m: two decks' edges closer than this (a divided road's carriageways on one bridge) face a
+                        # median: no parapets there, each slab widened to meet the other halfway (two parapets and a
+                        # dark gap stood in a divided road's median over a canal, Port St. Lucie, 2026-10-23)
 FOOTING_M = 2.0         # m a pier reaches into the ground
 PIER_T = 1.8            # m: a wall pier's thickness along the deck (at its top; FOOTING tapers wider)
 PIER_TAPER = 0.012      # its width grows this much per m down (each side)
@@ -370,12 +375,13 @@ PIER_BENT_W = 16.0      # a deck wider than this stands on columns (a bent) rath
 PIER_COLUMN = 1.6       # m square columns of a bent
 
 
-def deck(chunks, origin, piers=(), context=(), beams=()):
+def deck(chunks, origin, piers=(), context=(), beams=(), ground=()):
     """The bridge decks of a tile as one colliding mesh: per "deck" chunk a slab of opaque concrete
     (DECK_SIDE) whose top is at the chunk's fixed heights (the road surface, drawn DECK_SKIN above it
     by build()), with sides and underside DECK_DEPTH below; the piers, and the truss beams (p, q, width, height:
     bridgetypes.truss_members) in painted steel (TRUSS_STEEL). (positions, tris, uvs, materials, tri
-    material index) or None. Pure."""
+    material index) or None. ground: the tile's ground carriageways (roads.build_tile cover_out) for the parapet
+    test, drawn or not (with the roads painted into the ground the chunks have none). Pure."""
     dch = [c for c in chunks if c.get("deck")]
     rb = [(r, c) for r, c in zip(ribbons(dch), dch) if r[5] is not None]
     if not rb and not piers and not beams:
@@ -405,14 +411,20 @@ def deck(chunks, origin, piers=(), context=(), beams=()):
         mats.append(DECK_SIDE)
     side = mats.index(DECK_SIDE)                # opaque concrete; the asphalt is the road mesh's
     cr = [r for r in ribbons(list(context)) if r[5] is not None]
-    cov_ctx = [(r, c) for r, c in zip(cr, context)] + _ground_carriageways(chunks)
+    cov_ctx = [(r, c) for r, c in zip(cr, context)] + _ground_carriageways(list(chunks) + list(ground))
     covered = _parapet_cover([(r, c) for r, c in rb], cov_ctx)
+    medians = _median_gaps([(r, c) for r, c in rb],
+                           [(r, c) for r, c in zip(ribbons(list(context)), context) if r[5] is not None])
     for n, ((left, right, v, m, layer, z), c) in enumerate(rb):
         k = len(z)
         lat = left - right
         u = lat / np.maximum(np.hypot(lat[:, 0], lat[:, 1]), 1e-9)[:, None]     # unit left
         wide = 0.0 if c.get("tunnel") else PARAPET_W
-        el, er = left + u * wide, right - u * wide                  # the slab's edges, past the road's
+        gl, gr = medians[n]
+        covered[n] = (covered[n][0] | (gl > 0), covered[n][1] | (gr > 0))
+        # the slab's edges, past the road's (to the middle of a median beside another deck)
+        el = left + u * np.maximum(wide, gl / 2 + 0.05)[:, None]
+        er = right - u * np.maximum(wide, gr / 2 + 0.05)[:, None]
         L = np.c_[el, z] - origin
         R = np.c_[er, z] - origin
         Lb, Rb = L - [0, 0, DECK_DEPTH], R - [0, 0, DECK_DEPTH]
@@ -557,6 +569,50 @@ def _ground_carriageways(chunks):
             continue
         n = _normals(xy) * (float(c["w"]) / 2)
         out.append(((xy + n, xy - n, sv, c["m"], "base", z), c))
+    return out
+
+
+def _median_gaps(rb, context=()):
+    """Per deck ribbon (left, right) the gap (m) from each edge point to the nearest edge of another deck within
+    MEDIAN_JOIN_M at about its height (PARAPET_COVER_DZ), else 0: a median between two carriageways' decks. rb and
+    context: [(ribbon, chunk)]; the context's pieces of the same deck (its fid: the deck going on in the tiles around)
+    are not another deck (they had hidden every median at 0 m)."""
+    edges = []                      # (owner, points (k, 3))
+    for n, ((left, right, v, m, layer, z), c) in enumerate(rb):
+        key = c.get("fid", ("own", n))
+        edges.append((key, np.c_[left, z]))
+        edges.append((key, np.c_[right, z]))
+    for k, ((left, right, v, m, layer, z), c) in enumerate(context):
+        key = c.get("fid", ("ctx", k))
+        edges.append((key, np.c_[left, z]))
+        edges.append((key, np.c_[right, z]))
+    out = []
+    for n, ((left, right, v, m, layer, z), c) in enumerate(rb):
+        own = c.get("fid", ("own", n))
+        sides = []
+        for E in (np.c_[left, z], np.c_[right, z]):
+            g = np.zeros(len(E))
+            for owner, O in edges:
+                if owner == own or not len(O):
+                    continue
+                # (only near ones: a cheap box test first)
+                if (O[:, 0].min() > E[:, 0].max() + MEDIAN_JOIN_M or O[:, 0].max() < E[:, 0].min() - MEDIAN_JOIN_M
+                        or O[:, 1].min() > E[:, 1].max() + MEDIAN_JOIN_M
+                        or O[:, 1].max() < E[:, 1].min() - MEDIAN_JOIN_M):
+                    continue
+                d = np.hypot(E[:, None, 0] - O[None, :, 0], E[:, None, 1] - O[None, :, 1])
+                dz = np.abs(E[:, None, 2] - O[None, :, 2])
+                d = np.where(dz < PARAPET_COVER_DZ, d, np.inf).min(1)
+                hit = (d < MEDIAN_JOIN_M) & ((g == 0) | (d < g))
+                g = np.where(hit, np.maximum(d, 1e-3), g)
+            sides.append(g)
+        # (an edge facing away from the other deck is near it too where the decks are narrow: only the nearer edge
+        # of the two faces the median)
+        gl, gr = sides
+        both = (gl > 0) & (gr > 0)
+        gl = np.where(both & (gl > gr), 0.0, gl)
+        gr = np.where(both & (gr >= sides[0]), 0.0, gr)
+        out.append((gl, gr))
     return out
 
 

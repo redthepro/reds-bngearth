@@ -2,6 +2,36 @@
 
 What changed in each release of BeamNG.Earth, newest first.
 
+## 1.8.5-rc.1 — Earth 2 integration test candidate
+
+- Integrate the isolated Earth 2 work with fork main 320175c (1.8.4), retaining upstream gas stations, railways, signals, revisit caching and shared cell facts.
+- Add shared terrain preparation, opt-in checksummed compiled-terrain caching, bounded generation scheduling and stale-result/activation guards.
+- Add provenance-aware semantic data adapters and offline asset preparation tools with procedural fallbacks.
+- Include the experimental deterministic semantic asset resolver as development groundwork; it is not connected to the production renderer and no new catalog asset is approved.
+- Correct terrain preparation responses before anchor activation and update legacy fixtures for registered completion ownership/internal cache metadata.
+- This prerelease requires in-game testing. No engine drivability, visual improvement or frame-time improvement is claimed. Prior phase evidence and unresolved scope are in docs/earth2/handoffs.
+
+## 1.8.4 (2026-10-26)
+
+- Integrated upstream 1.6.3-beta, including route prefetch, reusable place caches, gas stations, railway detail,
+  Vienna speed signs, shared server time/weather and additional bridge/underpass fixes.
+- Combined upstream's native road/building and lazy building-part optimizations with this fork's courtyard,
+  multipolygon, landmark, streetlight and mapped-lane-width fixes. Native road tests exclude courtyard holes.
+- Preserved adaptive camera/driving-corridor streaming, AVX dispatch and delayed imagery at all driving speeds.
+- Includes the 1.8.3 voice panel, device-routing and current-server-only group fixes.
+
+## 1.8.3 (2026-10-26)
+
+- Fixed the Social & Voice panel passing a Lua statement block where the game callback requires an expression.
+  State polling, enabling voice, device selection and channel/group controls now reach the game extension.
+- Replaced the voice checkbox with a green **Voice On** / red **Voice Muted** slider switch.
+- Added device enumeration while muted, resolved system-default labels, active device names and a refresh control.
+  Changing microphone or output immediately reopens audio with the selected devices.
+- Limited group invitations to players currently connected to this server, rejected stale invitations from
+  disconnected senders, and filtered disconnected entries out of the social player list.
+- Added regression tests that execute the actual JavaScript-generated callback in Lua, plus device-routing and
+  disconnected-player group tests. Global voice remains separately joined and off by default.
+
 ## 1.8.2 (2026-10-26)
 
 - Added a dedicated Mods â†’ Earth Social & Voice control panel, with nearby/global/private-group channel cards,
@@ -63,6 +93,144 @@ What changed in each release of BeamNG.Earth, newest first.
   retries, and host limits remain in effect.
 - Includes upstream 1.6.2 and the fork's road, night-lighting, cache recovery, streaming, and security improvements.
   Every main commit runs cross-platform tests and publishes Windows EXE, Linux AppImage, BeamMP ZIP, and checksums.
+
+## 1.6.3 beta (2026-10-25)
+
+Works with BeamNG.drive 0.40.3.
+
+### New
+- **Places you've been load much faster the next time.** What was built around you (roads, buildings, the levelled
+  ground, the distant land and its aerial photos) is kept on disk. A teleport back, starting the game where you left
+  it, or driving a road you've driven before uses it instead of building it all again. In testing on a 6-core PC,
+  coming back to a city loaded all nearby roads in about 7 seconds instead of 27, and the distant land in about 10
+  instead of 35-45. To make that work, the map's centre (after a teleport, and when it moves along with you on a long
+  drive) now sits on a fixed grid near you, within about half a mile. The kept places use at most 2 GB; the oldest go
+  first.
+- **Gas stations with refuelling** (FluffyProgramming, PR #220): real stations with pumps, canopies and forecourts in
+  the region's stock style, where the stock refuel prompt fills the tank.
+- **Railway lines are real 3D track** (mpsteppe, PR #287): a ballast bed with sleepers and rails you can drive on, rail
+  bridges on concrete piers, and the ground cut and filled for the line. Trams, and the rails across roads at level
+  crossings, stay drawn in the road.
+- **Traffic lights only where the map has them** (mpsteppe, PR #288): no more lights at every town junction of two main
+  roads; mapped lights at country junctions too.
+- **Sidewalks follow OpenStreetMap's sidewalk tag** where a road has one (mpsteppe, PR #292).
+- **GPS routes download ahead** (SwissCheese26, PR #275): the first 12 miles of a planned route's roads, buildings and
+  elevation download at low priority, with a progress bar on the map.
+- **The map's place names stay visible when zoomed in** past street level (PR #275).
+- **Address search and the status bar's town names in the local language** in German-, French- and Italian-speaking
+  countries (from PR #275's German names).
+- **Bridges span the road under them** with its shoulders and the slopes up to the road above, so the road under runs
+  through at its full width instead of between wedges of ground (the Baltimore-Washington Parkway over a local road).
+- **Simple buildings first after a teleport:** the town around the car shows as simple buildings within seconds, and
+  each street's detailed buildings, trees and props replace them as its roads arrive.
+- **"Where you left off" saves your place as you drive** (every minute at most, at teleports, and when the game
+  closes), so a restart, or a crash, puts you back where you were.
+- **South Asian towns look more like themselves** (OmdevShastri, PR #146): plastered flat-roofed buildings in India,
+  Pakistan, Bangladesh, Sri Lanka and Nepal, and local road surface names.
+- **European speed limit signs** (cristivasile, PR #195): round km/h signs from 30 to 150 and Germany's end-of-limit
+  sign, where limits are posted in km/h.
+- **Roads mapped as part of a route relation get their real lanes, width and surface** (Misnik1337, PR #213; GitHub
+  #261).
+- **Earlier pull requests now in a release:** railway and tram tracks on the ground (Misnik1337, PR #214), divided
+  roads' bridges joined across the median (veilednet, PR #207), 20 ft of headroom under overpasses where the ground
+  allows (amccoy-crypto, PR #95), and no more curb bulb-outs at every corner (focalfury, PR #216; GitHub #208, #253).
+  Thank you all!
+
+The map's road data downloads again once after the update.
+
+### Faster world building
+- **Roads and buildings appear sooner on a first visit** (GitHub #241): elevation tiles that don't exist are no longer
+  asked for, and on computers with more than 8 CPU threads a place's map data downloads all at once instead of one
+  piece after another. In testing on a 16-thread PC, the first roads came 3 to 14 seconds sooner.
+- **Less work to build the roads, buildings and levelled ground of a new place.** Much of the road and grading code
+  was made faster (a good part of it rewritten as native code), and the server's processes now share what they work
+  out about each map area instead of each doing it again. In testing, a busy city's nearby roads took about a third
+  less computer time than this morning's build (Baltimore's Penn Station: 24 to 16 seconds of work for 16 road
+  pieces), and distant land about half the computer time of the last version.
+- **Short teleports are quick too:** a teleport less than about 12 miles away (across town, a saved place nearby) now
+  places the car as fast as a long one. In testing in Manhattan the car was placed after about 2 seconds instead of
+  26, and the first roads came after 12 seconds instead of 39.
+- **Roads, sidewalks and building collision keep up better right after a teleport** on PCs with 12 or more CPU threads
+  and 24 GB of memory or more: the world server now builds 4 road pieces at once there (3 with 8 or more threads,
+  still 2 on smaller machines). Driving off at 50 mph right after a teleport into Manhattan, the road under the car was
+  there after about 6 seconds instead of 15, at the same frame rate.
+- **Reduced the chance of roads not loading at all after a few teleports on PCs with few cores** (found on a 6-core
+  Windows PC): building the traffic's road network for a new place could keep the world server busy for minutes, and
+  the roads, sidewalks and buildings around the car waited behind it.
+
+### Multiplayer
+- **BeamNG.Earth servers are a category of BeamMP's own server browser** (search, filters, favorites, details), in
+  their own colour, with the official server at the top and each server's country flag.
+- **Server owners can set the time and weather for everyone** (the plugin's settings): the real time and weather of
+  the place (as before), a fixed or running time of day, and clear, cloudy, rain, storm, snow or fog weather.
+- **The app finds a BeamMP launcher you built or put somewhere yourself** more often (a `BeamMP-Launcher` folder in your
+  home folder or one folder down, or `~/.local/share`). The install question has a new answer, **Have it already**,
+  which opens your system's file window to pick your launcher (or you type its path) and remembers it
+  (`--beammp-launcher PATH` does the same). The settings page's **BeamMP launcher** changes it later.
+- **No more spawning high above the ground after joining:** the free camera kept its old height next to the other
+  players, and a car spawned from it dropped from there.
+- **Reduced the chance of another player's car going unstable** (and BeamMP stopping it with an error) when it comes
+  back into your world after its player teleported away and back.
+- **Fixed an error in other players' cars' damage** when the damage arrived just as their car came back.
+- **No more name tags floating on an empty road** where another player's car is hidden.
+
+### Fixes
+- **Reduced the chance of ramps and dips where roads meet** (GitHub #266, BR-381 in Brazil): the pieces of a road are
+  now smoothed together through a junction, instead of each on its own (they met up to about 7 ft apart on slopes).
+- **Reduced the chance of an overpass sitting right on top of the highway under it:** when an overpass can't be raised
+  enough on its ramps, the road under it now dips under the bridge, as real roads in a cutting do.
+- **Reduced the chance of buildings floating beside roads in cuttings** (idea from hashk014's PR #69): buildings next
+  to the road stand on the same shaped ground as the road.
+- **Reduced the chance of humps in roads that pass under a bridge** (GitHub #271).
+- **Autodrive: reduced the chance of the car stopping and turning around on winding roads** (GitHub #269).
+- **Fewer footpaths, bins and hydrants along highways in the middle of nowhere** (GitHub #267, the Nullarbor).
+- **Reduced the chance of the car not responding to any controls after closing the map** (GitHub #252).
+- **Reduced the chance of a crash on BeamNG 0.40.3 when the window is minimized while driving** (Misnik1337, PR #213):
+  the world no longer moves its ground while the game window is minimized.
+- **Reduced the chance of freezes of several seconds that keep coming back after using walking mode** (GitHub #240).
+- **Reduced the chance of AI traffic, parked cars, traffic lights and far-away cars floating over the road** far from
+  where you started: their positions ignored the Earth's curve (up to about 60 ft near the rebase distance). Thanks to
+  KyzoFox (PR #112) for finding it.
+- **Reduced the chance of truck-shaped "buildings" standing on motorway lanes** (GitHub #239, #246).
+- **Reduced the chance of bridge walls standing across a road** where a bridge ends at a junction (GitHub #258).
+- **Reduced the chance of boxes on steep bare mountainsides** (GitHub #242, Mount Fuji).
+- **Fixed black strips and blocks on the ground in New York City** (GitHub #251).
+- **Reduced the chance of the world never loading when its first piece of ground fails** (a damaged download, GitHub
+  #286): it is tried again by itself.
+- **The minimap's and the navigation app's distance to your destination counts the whole route** (a long trip showed
+  only the next 1-2 miles).
+- **If the ground under you takes very long to build, the server log now says what it is waiting for** (GitHub #263).
+- **Linux: the setting "Start BeamMP with BeamNG.Earth" is now followed** (the app always started BeamMP).
+- **Reduced the chance of map data being downloaded again on Windows** when another part of the app was saving the
+  same file at that moment.
+
+### Other
+- **The map download cache can go on another drive** (GitHub #254): settings page > Download cache > **Cache folder**
+  opens your system's folder window (or type or paste the folder), used from the next start. `--cache-dir PATH` when
+  starting the app does the same.
+- **BeamNG.drive installed outside Steam's libraries** (another launcher, a folder of its own): the app asks where it is
+  (your system's folder window, or type the path) and remembers it; `--game-dir PATH` does the same.
+
+### Hosting a BeamMP server
+- Update the server zip with this release: it carries the mod your server sends to players. Which list your server is
+  on is set in `ServerConfig.toml` as before (`Private = false` with your AuthKey: the BeamNG.Earth category; see the
+  server zip's README).
+
+### Which file do I need?
+- **`BeamNG.Earth-1.6.3-beta.exe`: Windows players.** The whole app in one file: run it and it installs the mod into
+  BeamNG.drive, starts the world server, BeamMP and the game (Windows may warn about an unknown app: More info > Run
+  anyway). Steam must be running.
+- **`BeamNG.Earth-1.6.3-beta-x86_64.AppImage`: Linux and Steam Deck players** (on the Deck, in Desktop Mode). Make it
+  executable (right-click > Properties, or `chmod +x`) and run it.
+- **Joining a BeamMP server with BeamNG.Earth?** Run the app above, then in the game: More > BeamMP, the
+  **BeamNG.Earth** category.
+- **`BeamNG.Earth-BeamMP-Server-1.6.3-beta.zip`: only for people hosting a BeamMP server** (unzip it into the server's
+  folder; see its README). Players don't need it.
+- **`Source code (zip)` and `Source code (tar.gz)`: for developers.** Added by GitHub to every release; not needed to
+  play.
+
+If you want to talk about this mod with me or other people, join my Discord server at
+[discord.gg/tgf](https://discord.gg/tgf) and head to the #beamng-earth channel.
 
 ## 1.6.2 beta (2026-10-24)
 

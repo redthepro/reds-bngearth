@@ -114,6 +114,14 @@ members of the group must be trusted; peer traffic is authenticated, not encrypt
      `Resources/Server/BeamNGEarth/main.lua`.
 
    The server lists itself once a minute with `curl` (built into Linux and Windows 10 and later).
+
+   **Time and weather** (near the top of `Resources/Server/BeamNGEarth/main.lua`, then restart the server):
+   - `G.TIME = 'real'` (each player's real local time where they are) or a fixed local time such as `'20:30'`, with
+     `G.TIME_SPEED` 0 (it stays), 1 (it runs at real speed) or more (60: an hour of the day every real minute). Every
+     player sees the same time.
+   - `G.WEATHER = 'real'` (the live weather where each player is) or `'clear'`, `'cloudy'`, `'rain'`, `'storm'`,
+     `'snow'`, `'fog'` for everyone.
+   - A player who set Sky or Weather to Manual in BeamNG.Earth's settings keeps their own.
 4. **Open the port** if players come over the internet: forward the server's port, **TCP and UDP**, in your router to
    the server's computer (and allow it in its firewall). Players on the same network need nothing.
 5. **Start the server.** Its log should show `[BeamNG.Earth] plugin loaded`.

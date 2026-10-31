@@ -99,7 +99,9 @@ MOD_TO_SERVER = {
               "slotSession": F(str, OPT), "slotsHeld": F((list, dict), OPT), "streaming": F(dict, OPT)},
     "prepare_anchor": {"requestId": F(int), "lat": F(NUM), "lon": F(NUM), "cx": F(NUM, OPT), "cy": F(NUM, OPT),
                        # 2026-10-22: the player's spot when not the origin (BeamMP: onto another player's anchor)
-                       "px": F(NUM, OPT), "py": F(NUM, OPT)},
+                       "px": F(NUM, OPT), "py": F(NUM, OPT),
+                       # 2026-10-25: 'teleport' (a declared teleport: provisional first block, boost) or 'rebase'
+                       "purpose": F(str, OPT)},
     "commit_anchor": {"anchorId": F(int)},
     "prepare_terrain": {"requestId": F(int), "anchorId": F(int), "cx": F(NUM), "cy": F(NUM)},
     "commit_terrain": {"anchorId": F(int), "cx": F(NUM), "cy": F(NUM),
@@ -118,6 +120,8 @@ MOD_TO_SERVER = {
     # the download cache (cache.py; additive): the page's size cap (GB, 0 = unlimited), a clear, or
     # neither (fresh usage numbers); always answered with a 'cache'
     "cache": {"capGb": F(NUM, OPT), "clear": F(bool, OPT)},
+    # 2026-10-25: the settings page's cache folder / BeamMP launcher (apppaths.py): chosen in a window or typed
+    "app_path": {"what": F(str, OPT), "pick": F(bool, OPT), "path": F(str, OPT)},
     # the ground's collision patch under another vehicle's collision island off the block (terrainpatch.lua / .py)
     "terrain_patch": {"anchorId": F(int), "key": F(str), "x0": F(NUM), "y0": F(NUM), "x1": F(NUM), "y1": F(NUM)},
     # the performance log (perflog.lua; additive): lines for the server's log (hitches, drops, minutes, the machine)
@@ -129,6 +133,8 @@ MOD_TO_SERVER = {
     "peers": {"me": F(str), "members": F(list)},
     # roads (roads.py; additive): the mod removed its roads (switched off and on again): send them again
     "roads_reset": {},
+    # gas stations (gasstations.py; additive): on, sent after every hello
+    "gas_stations": {"on": F(bool)},
     "map_tiles": {"tiles": F(list)},       # the world map's basemap tiles as files (settings.mapTiles)
     "geocode": {"id": F(int), "q": F(str), "lat": F(NUM, OPT), "lon": F(NUM, OPT)},   # the map's search box
     "route": {"id": F(int), "lat0": F(NUM), "lon0": F(NUM), "lat1": F(NUM), "lon1": F(NUM),
@@ -157,10 +163,12 @@ VOICE_MICROPHONE = {"active": F(bool), "level": F(NUM), "detected": F(bool)}
 SERVER_TO_MOD = {
     'voice_status': {'enabled': F(bool), 'error': F(str), 'connected': F(list), 'talk': F(str),
                      'speaking': F(list), 'inputs': F(list), 'outputs': F(list),
-                     'microphone': F(dict), 'testing': F(bool)},
+                     'microphone': F(dict), 'testing': F(bool), 'deviceDefaults': F(dict),
+                     'deviceActive': F(dict), 'deviceError': F(str)},
     "server_list": {"servers": F(list, OPT), "error": F(str, OPT)},   # earthd.server_list (the list service)
     "geocode_result": {"id": F(int), "results": F(list), "error": F(str, OPT)},   # geocode.py (Photon)
     "route_result": {"id": F(int), "points": F(list), "dist": F(NUM), "dur": F(NUM), "error": F(str, OPT)},  # OSRM
+    "route_download": {"total": F(int), "done": F(int), "active": F(bool)},  # routeahead.py: the route's corridor
     "update": {"current": F(str), "latest": F(str), "url": F(str)},   # a newer version on GitHub (updates.py)
     "update_status": {"state": F(str), "text": F(str), "done": F(int, OPT), "total": F(int, OPT),
                       "version": F(str, OPT)},      # the "Update now" download (selfupdate.py)
@@ -191,7 +199,8 @@ SERVER_TO_MOD = {
                      "floorZ": F(NUM, NULL, OPT),          # 2026-10-17: in a tunnel, its floor (core.floorCheck)
                      "anchorKey": F(str, OPT),             # phase 5 (lattice anchors): not sent yet
                      "provisional": F(bool, OPT),          # 2026-10-22: a teleport's ungraded first block
-                     "px": F(NUM, NULL, OPT), "py": F(NUM, NULL, OPT)},    # the prepare_anchor's spot, echoed
+                     "px": F(NUM, NULL, OPT), "py": F(NUM, NULL, OPT),     # the prepare_anchor's spot, echoed
+                     "fuelShapes": F(list, OPT)},          # 2026-10-23: the region's gas station shapes (--gas-stations)
     "anchor_error": {"requestId": F(int, NULL), "error": F(str)},
     "share": {"port": F(int, NULL), "code": F(str), "weight": F(NUM, OPT), "token": F(str, OPT)},   # our group service (mpsession.onShare)
     "terrain_ready": {"requestId": F(int), "anchorId": F(int), **TERRAIN},
@@ -251,6 +260,7 @@ SERVER_TO_MOD = {
     # ... its answer: the patch's shape and centre, or an error (the mod asks again later)
     "terrain_patch": {"anchorId": F(int), "key": F(str), "parts": F(list, OPT),     # [{path, x, y}]: small meshes
                       "tris": F(int, OPT), "error": F(str, OPT)},
+    "app_paths": {"cacheDir": F(str), "cacheNext": F(str), "beammp": F(str), "result": F(dict, OPT)},
     "cache": {"v": F(int), "usedBytes": F(int), "capBytes": F(int), "files": F(int), "ready": F(bool),
               "managed": F(bool), "clearedBytes": F(int, OPT)},
 }
@@ -270,8 +280,9 @@ EXERCISED_ELSEWHERE = {"far_retex", "roads_tile", "roads_drop",   # roads: needs
                        "navgraph",                                   # --traffic on: needs map data
                        "map_tiles_ready",                            # only when the world map asks (map_tiles)
                        "update",                                     # only when GitHub has a newer version (online)
-                       "geocode_result", "route_result",
-                       "server_list"}                                # only when the BeamMP tab asks (online)             # only when the map / GPS asks                            # only when the world map asks (map_tiles)
+                       "geocode_result", "route_result",             # only when the map / GPS asks
+                       "route_download",                             # only when the GPS plans a route (routeahead.py)
+                       "server_list"}                                # only when the BeamMP tab asks (online)
 # events the mod's net.lua makes up itself (not on the wire)
 MOD_INTERNAL = {"_connected": set(), "_disconnected": {"error"}}
 
@@ -970,6 +981,8 @@ class ServerMessagesTest(test_server.ServerHarness):
         self.assertEqual(until(lambda m: m["type"] == "cache")["capBytes"], 10_000_000_000)
         c.send({"type": "cache", "clear": True})        # ... and "Clear cache"
         self.assertIn("clearedBytes", until(lambda m: m["type"] == "cache"))
+        c.send({"type": "app_path"})                    # the page's cache folder and BeamMP launcher (no choice made)
+        self.assertTrue(until(lambda m: m["type"] == "app_paths")["cacheDir"])
         c.send({"type": "share"})                       # a BeamMP session: our group service's port and code
         self.assertTrue(until(lambda m: m["type"] == "share")["code"])
         c.send({"type": "peers", "me": "1", "members": []})     # (alone: no group; nothing answered)

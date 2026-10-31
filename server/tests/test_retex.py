@@ -222,6 +222,7 @@ class SchedulerTest(unittest.TestCase):
         async def body():
             fut = asyncio.get_running_loop().create_future()
             fut.set_result(info)
+            s.tile_inflight[ck] = fut  # completion belongs to the current registered build
             s._tile_done(ck, fut)
         self.run_loop(body)
         self.assertEqual([m["key"] for m in self.conn.msgs], ["0_1_0"])
@@ -237,6 +238,7 @@ class SchedulerTest(unittest.TestCase):
         async def body():
             fut = asyncio.get_running_loop().create_future()
             fut.set_result(info)
+            s.tile_inflight[ck] = fut  # completion belongs to the current registered build
             s._tile_done(ck, fut)
         self.run_loop(body)
         self.assertEqual(self.conn.msgs, [{"type": "far_retex", "anchorId": 1, "key": "0_1_0",

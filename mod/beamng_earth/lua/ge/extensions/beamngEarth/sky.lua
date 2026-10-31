@@ -33,6 +33,10 @@ M.MISSION_RESUME_S = 5
 M.BIGMAP_TAIL_S = 2        -- the big map puts its time back as it closes
 
 local mode = 'real'
+-- A BeamMP server's clock (its plugin's G.TIME, through mpsession): { hours = local time it starts at, speed = game
+-- seconds per real second (0: it stays), epoch = when it started (os.time) }. In 'real' mode the sky then shows that
+-- local time instead of the real one, on the real date at the player's place; nil: the real clock.
+local serverClock = nil
 local timer = RESYNC_S -- sync on the first update
 local realTz = nil     -- { hours, lat, lon }: the real UTC offset at a point (setRealUtcOffset)
 local clock, graceUntil, bigMapUntil = 0, M.GRACE_S, 0
@@ -140,21 +144,52 @@ function M.timeChanges(changes, cur, real)
   return out
 end
 
+-- Pure: the local hours a server clock c shows at time now (os.time): its start, run on at its speed.
+function M.serverHours(c, now)
+  local h = tonumber(c and c.hours) or 12
+  local speed = math.max(0, tonumber(c and c.speed) or 0)
+  local since = math.max(0, (tonumber(now) or 0) - (tonumber(c and c.epoch) or tonumber(now) or 0))
+  return (h + since * speed / 3600) % 24
+end
+
 function M.sync()
   local tod = getTod()
   if not tod then return false end
   local lat, lon = tonumber(tod.latitude) or 0, tonumber(tod.longitude) or 0
-  local f = M.todFields(os.time(), lat, lon, realTz)
+  local now = os.time()
+  local f = M.todFields(now, lat, lon, realTz)
   tod.year, tod.month, tod.day = f.year, f.month, f.day
   tod.utcOffset = f.utcOffset
+  if serverClock then
+    local speed = math.max(0, tonumber(serverClock.speed) or 0)
+    tod.time = (M.serverHours(serverClock, now) / 24 - 0.5) % 1.0
+    tod.dayLength = speed > 0 and M.REAL_DAY_S / speed or M.REAL_DAY_S
+    tod.play = speed > 0
+    return true
+  end
   tod.time = f.time
   tod.dayLength = M.REAL_DAY_S -- real-time clock between re-syncs
   tod.play = true
   return true
 end
 
+-- A BeamMP server's clock (see serverClock above; nil: the real one again). Synced at once.
+function M.setServerClock(c)
+  if type(c) == 'table' and tonumber(c.hours) then
+    serverClock = { hours = tonumber(c.hours) % 24, speed = math.max(0, tonumber(c.speed) or 0),
+      epoch = tonumber(c.epoch) or os.time() }
+  else
+    serverClock = nil
+  end
+  timer = RESYNC_S
+  return serverClock
+end
+
+function M.serverClock() return serverClock end
+
 function M.setMode(m)
   if m ~= 'real' and m ~= 'manual' then return 'mode must be "real" or "manual"' end
+  if m == 'manual' and mode ~= 'manual' then M.manualBy = debug.traceback('', 2) end   -- (who: the MP status)
   mode = m
   pending = nil
   if mode == 'real' then timer = RESYNC_S end
@@ -329,7 +364,7 @@ end
 -- core_environment's hook (setTimeOfDay passes the whole TimeOfDay table, setState whatever its
 -- caller gave), fired before the change is applied.
 function M.onEnvironmentChanged(changes)
-  if mode ~= 'real' or pending or type(changes) ~= 'table' then return end
+  if mode ~= 'real' or pending or serverClock or type(changes) ~= 'table' then return end
   local any = false
   for k in pairs(TIME_KEYS) do if changes[k] ~= nil then any = true; break end end
   if not any then return end -- most hooks are weather (ours at 4 Hz): nothing to read

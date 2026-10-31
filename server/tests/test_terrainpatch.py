@@ -52,6 +52,20 @@ class TerrainPatchTest(unittest.TestCase):
             self.assertEqual(len(tris), 512)
             self.assertAlmostEqual(float(np.abs(pos[:, :2]).max()), 64.0, 5, "a piece's vertices round its own centre")
 
+    def test_heights_on_the_curve_of_the_earth(self):
+        """10 km from the anchor the patch lies where the block's ground is drawn, the frame's up (~7.8 m under the
+        raw height): raw heights stood it over the ground and the far cars on it seemed to float."""
+        import cdae
+        frame = geodesy.EnuFrame(39.28, -76.59)
+        with tempfile.TemporaryDirectory() as d:
+            z = lambda la, lo: np.full(np.shape(la), 12.5)
+            parts, _ = terrainpatch.build(frame, z, (0, 10000, 128, 10128), os.path.join(d, "patch_1"))
+            sh = cdae.read(parts[0][0])
+            m = next(m for m in sh["meshes"] if m["type"] == 0)
+            zs = cdae.mesh_arrays(m)["verts"][:, 2]
+            drop = 10064.0 ** 2 / (2 * 6371000.0)
+            self.assertAlmostEqual(float(zs.mean()), 12.5 - drop, delta=0.2)
+
 
 if __name__ == "__main__":
     unittest.main()

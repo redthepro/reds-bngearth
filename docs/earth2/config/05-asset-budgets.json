@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "status": "phase-05 standalone preparation guardrails; engine budgets pending",
+  "source_commit": "aae4d6126d65a07315d0b28cc4a81dd68d86280a",
+  "acquisition": {
+    "candidate_limit": 12,
+    "batch_download_bytes": 250000000,
+    "archive_bytes_per_asset": 67108864,
+    "expanded_bytes_per_asset": 536870912,
+    "archive_members_per_asset": 2048,
+    "compression_ratio_limit": 100,
+    "redirect_limit": 3,
+    "request_timeout_seconds": 30,
+    "total_deadline_seconds": 300
+  },
+  "common": {
+    "runtime_format": "collada",
+    "texture_format": "png",
+    "units": "meters",
+    "up_axis": "+Z",
+    "forward_axis": "+Y",
+    "handedness": "right",
+    "pivot": "ground_center",
+    "vertex_limit_per_mesh": 65000,
+    "license_allow": ["cc0", "cc-by"],
+    "license_review": ["cc-by-sa", "cc-by-nc", "cc-by-nc-sa"],
+    "license_deny": ["cc-by-nd", "cc-by-nc-nd", "unknown"]
+  },
+  "profiles": {
+    "roadside_small": {
+      "categories": ["roadside.barrier", "roadside.bollard"],
+      "lod_triangles": [12000, 4000, 1000],
+      "material_slots": 2,
+      "texture_max_dimension": 2048,
+      "texture_bytes": 16777216,
+      "collision_mode": "simple_box_or_hull",
+      "collision_triangles": 256
+    },
+    "vegetation_tree": {
+      "categories": ["vegetation.tree.broadleaf", "vegetation.tree.needleleaf"],
+      "lod_triangles": [20000, 6000, 1500],
+      "material_slots": 3,
+      "texture_max_dimension": 2048,
+      "texture_bytes": 25165824,
+      "collision_mode": "simple_trunk",
+      "collision_triangles": 64
+    },
+    "rock_medium": {
+      "categories": ["terrain.rock"],
+      "lod_triangles": [10000, 3000, 800],
+      "material_slots": 2,
+      "texture_max_dimension": 2048,
+      "texture_bytes": 16777216,
+      "collision_mode": "simple_hull",
+      "collision_triangles": 128
+    },
+    "building_detail": {
+      "categories": ["building.detail"],
+      "lod_triangles": [8000, 2000, 500],
+      "material_slots": 2,
+      "texture_max_dimension": 2048,
+      "texture_bytes": 16777216,
+      "collision_mode": "none",
+      "collision_triangles": 0
+    }
+  },
+  "engine_pending": {
+    "game_version": null,
+    "static_mesh_import": null,
+    "material_resolution": null,
+    "lod_switching": null,
+    "collision_behavior": null,
+    "frame_time": null,
+    "ram_vram": null
+  }
+}

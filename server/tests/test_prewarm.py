@@ -18,7 +18,7 @@ import prewarm  # noqa: E402
 import roadmesh  # noqa: E402
 import roads  # noqa: E402
 import sidewalks  # noqa: E402
-from test_blockworker import FakeDem, FakeMapData  # noqa: E402
+from test_blockworker import FakeDem, FakeMapData, tmp_cache  # noqa: E402
 from test_roads import LAT, LON, FRAME, features  # noqa: E402
 
 
@@ -41,7 +41,7 @@ class PrewarmTest(unittest.TestCase):
         keys = roads.cells_of_tile(FRAME, 0, 0)
         blockworker._s = SimpleNamespace(md=FakeMapData(f, keys[0]), dem=FakeDem(), widths=None, surface=None,
                                          airports=None, sea=None, lock=threading.Lock(), bridges={},
-                                         anchor=lambda aid, lat, lon: (None, None))
+                                         anchor=lambda aid, lat, lon: (None, None), cache_dir=tmp_cache(self))
         mats = set(prewarm.materials())
         with tempfile.TemporaryDirectory() as d:
             blockworker.roads_tile(1, LAT, LON, 15, 0, 0, d, "/temp/x", True, 0.05)

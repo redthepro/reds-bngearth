@@ -5,7 +5,8 @@ recent places), then poll the mod's status every POLL_S and print when each part
   python3 tools/teleport_time.py 39.2834,-76.5934 [--timeout 300] [--json out.json]
 
 Milestones (seconds after the teleport call): anchor (the new frame committed: the car is placed), far (the far
-field done), roads (every road tile's roads and meshes made, nothing queued), trees (no tree tile pending),
+field done), roads (every road tile's roads and meshes made, nothing queued), roads9 / roads18 / roads36 (that many
+road tiles made), trees (no tree tile pending),
 backlog (the server has nothing queued; fresh only with earthd --status-interval 1), all (everything at once).
 The game's MCP server must be on and the companion server running. The car is left where it lands.
 """
@@ -61,6 +62,8 @@ def main():
             "backlog": moved and s["backlog"] == 0,
         }
         done["all"] = all(done.values())
+        for n in (9, 18, 36):           # (road tiles made: the first ones' "roads" mark is when the mod's queue first ran dry)
+            done[f"roads{n}"] = moved and (s["roadTiles"] or 0) >= n
         for k, v in done.items():
             if v and k not in marks:
                 marks[k] = t

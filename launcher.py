@@ -32,6 +32,8 @@ import sys
 import threading
 import time
 
+import apppaths
+
 FROZEN = getattr(sys, "frozen", False)
 ROOT = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
 IS_WIN = os.name == "nt"
@@ -39,9 +41,10 @@ APP_ID = "284160"
 GAME_EXE_LINUX = os.path.join("BinLinux", "BeamNG.drive.x64")
 GAME_EXE_WIN = "BeamNG.drive.x64.exe"
 GCPATCH_NAME = "libbngearth_gcpatch.so"
-# the recommended server options (start.py's)
+# the recommended server options (start.py's; test_gasstations checks they are the same: PR #220 added gas stations
+# to start.py only, and the app's server never allowed them)
 RECOMMENDED = ["--deshadow", "full", "--near-visual", "detail", "--airports", "on", "--sea", "on", "--trees", "on",
-               "--buildings", "on"]
+               "--buildings", "on", "--gas-stations", "on"]
 SERVER_PORT = 47613         # earthd's default
 GAME_GONE_S = 30            # no game process this long: the game closed (wait_for_game)
 GAME_START_S = 180          # waiting for the game's process after asking Steam
@@ -110,12 +113,26 @@ def problem(msg, hint=None):
     _out("")
 
 
-def data_dir():
-    """Where the launcher keeps its files (logs, the gcpatch copy): the server's cache folder's parent."""
-    if IS_WIN:
-        base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
-        return os.path.join(base, "beamng-earth")
-    return os.path.join(os.path.expanduser("~"), ".cache", "beamng-earth")
+# where the launcher keeps its files and remembered choices (app.json: cacheDir, gameDir), shared with the server's
+# settings page (apppaths.py)
+data_dir, app_settings, save_app_settings = apppaths.data_dir, apppaths.app_settings, apppaths.save_app_settings
+
+
+def cache_dir_arg(given, dd=None):
+    """The download cache's folder for the server (GitHub #254: "re locate the map files to a different hard drive"):
+    --cache-dir PATH is remembered for the next starts, --cache-dir default forgets it. Returns the folder, or None
+    (the server's default, .cache/beamng-earth in the home folder). Files already downloaded stay where they were: the
+    player moves the folder over (or they are downloaded again)."""
+    if given is not None:
+        if given.strip().lower() in ("", "default"):
+            save_app_settings(dd, cacheDir=None)
+            return None
+        path = os.path.abspath(os.path.expanduser(given.strip().strip('"')))
+        os.makedirs(path, exist_ok=True)
+        save_app_settings(dd, cacheDir=path)
+        return path
+    path = app_settings(dd).get("cacheDir")
+    return path if isinstance(path, str) and path else None
 
 
 # --- the server -----------------------------------------------------------------------------------
@@ -259,6 +276,9 @@ def stop_server(proc):
 
 def linux_game_exe():
     import install
+    own = apppaths.saved_game_dir()         # (the folder the player chose: --game-dir, the start's question)
+    if own:
+        return os.path.join(own, GAME_EXE_LINUX)
     for lib in install._steam_roots():
         exe = os.path.join(lib, "steamapps", "common", "BeamNG.drive", GAME_EXE_LINUX)
         if os.path.isfile(exe):
@@ -447,6 +467,9 @@ def windows_game_dir():
     """The game's folder on Windows (also inside a Proton prefix), as BeamMP's launcher finds it: installPath in
     %LOCALAPPDATA%\\BeamNG\\BeamNG.drive.ini, else the game's registry key, else Steam's libraries."""
     ok = lambda d: d and os.path.isfile(os.path.join(d, "BeamNG.drive.exe"))
+    own = apppaths.saved_game_dir()         # (the folder the player chose: --game-dir, the start's question)
+    if own:
+        return own
     d = windows_beamng_ini().get("installPath")
     if ok(d):
         return d
@@ -492,7 +515,10 @@ def start_game(use_gcpatch, build="native", gfx="", user_dir=None):
     win_args = ["-gfx", GFX_ARG.get(gfx, gfx)] if gfx else []
     extra = os.environ.get("BNGE_GAME_ARGS", "").split()     # (tests: e.g. "-bngetest car,damage")
     win_args += extra
-    if IS_WIN and not win_args and not under_wine():
+    # a game folder the player chose outside Steam's libraries (another launcher, a copy of its own): started directly
+    own = apppaths.saved_game_dir()
+    own = own if own and not apppaths.in_steam_library(own) else None
+    if IS_WIN and not win_args and not under_wine() and not own:
         # through Steam on Windows itself: Steam Input (a Steam Controller), the overlay and Steam's play time reach
         # only a game Steam started (GitHub #218, 1.6.1 on Windows: "Steam doesn't pass input from the Steam
         # Controller into the game"). Not with start options (--gfx, tests): Steam asks the player whether to allow
@@ -519,7 +545,7 @@ def start_game(use_gcpatch, build="native", gfx="", user_dir=None):
         if exe and sandboxed_game(exe):
             row("Game", "starting through Steam (a Flatpak / snap Steam: without the grass patch)")
             exe = None
-        if exe and steam_running():
+        if exe and (steam_running() or own):
             env = clean_env()
             env["SteamAppId"] = APP_ID
             # (Game Mode: started from a Steam shortcut, the shortcut's id is the game gamescope shows)
@@ -852,6 +878,14 @@ def main():
     ap.add_argument("--keep-mod", action="store_true", help="leave the game's copy of the mod as it is")
     ap.add_argument("--no-beammp", action="store_true",
                     help="do not start BeamMP (multiplayer) with the game (bmplaunch.py)")
+    ap.add_argument("--cache-dir", metavar="PATH",
+                    help="where the map download cache goes, e.g. another drive (kept for the next starts; "
+                         "'default' goes back to .cache/beamng-earth in your home folder)")
+    ap.add_argument("--beammp-launcher", metavar="PATH",
+                    help="the BeamMP launcher you already have (its file or folder; kept for the next starts)")
+    ap.add_argument("--game-dir", metavar="PATH",
+                    help="where BeamNG.drive is installed, when it is not found in Steam's libraries (another "
+                         "launcher, a folder of its own; kept for the next starts, 'default' forgets it)")
     ap.add_argument("--user-dir", help="BeamNG.drive user folder (default: found)")
     ap.add_argument("--proton", dest="build", action="store_const", const="proton",
                     help="Linux: the game is the Windows build under Proton")
@@ -895,6 +929,20 @@ def main():
         sys.exit(1)
 
 
+def ask_game_dir(ask=None):
+    """The game is in none of Steam's libraries (another launcher, a folder of its own): the player is asked where it
+    is (the system's folder window, or the path typed), kept for the next starts. Skipped: through Steam as before."""
+    say("BeamNG.drive was not found in Steam's libraries.")
+    exe = "BeamNG.drive.exe" if IS_WIN else "BinLinux/BeamNG.drive.x64"
+    d = apppaths.ask_path(f"Where is BeamNG.drive installed? (the folder with {exe})", "folder",
+                          apppaths.set_game_dir, ask=ask, say=say)
+    if d:
+        say(f"  Using {d} (from now on; --game-dir PATH changes it, --game-dir default forgets it).")
+    else:
+        say("  Not set: the game is started through Steam.")
+    return d
+
+
 def beammp_install(user_dir, dd, ask=None):
     """BeamMP isn't installed: the player is asked (the user, 2026-10-24: "Yes/No/No and dont ask again", on both
     systems). Yes: the official launcher downloaded (bmplaunch.download). No: not this time. Don't ask again: the
@@ -906,10 +954,19 @@ def beammp_install(user_dir, dd, ask=None):
     question = ("  Install the official BeamMP launcher now (a few MB from GitHub)?" if IS_WIN else
                 "  Build BeamMP's launcher from its source now (a few minutes, once)?")
     try:
-        answer = ask(question + " [Y]es / [N]o / [D]on't ask again: ")
+        answer = ask(question + " [Y]es / [N]o / [D]on't ask again / [H]ave it already: ")
     except (EOFError, OSError):
         return None                         # (no console to ask in: asked next time)
     answer = (answer or "").strip().lower()
+    if answer in ("h", "have", "have it", "have it already"):
+        # (a player's own launcher in a folder of their own: they did not want a second one, Discord 2026-10-24)
+        exe = apppaths.ask_path(f"Where is your BeamMP launcher ({bmplaunch.EXE}, or its folder)?", "file",
+                                lambda p: bmplaunch.remember(dd, p), ask=ask, say=say, name=bmplaunch.EXE)
+        if exe:
+            say(f"  Using {exe} (from now on; --beammp-launcher PATH changes it).")
+        else:
+            say(f"  No {bmplaunch.EXE} there: asked again next time (or start with --beammp-launcher PATH).")
+        return exe
     if answer in ("d", "don't", "dont", "never"):
         bmplaunch.set_on_launch(user_dir, False)
         say("  Not installed, and not asked again. To use multiplayer later, turn on \"Start BeamMP with BeamNG.Earth\"")
@@ -942,9 +999,19 @@ def beammp_up(user_dir, build, args):
         row("Multiplayer", "BeamMP is already running")
         return None
     dd = data_dir()
+    own = apppaths.saved_game_dir()
+    if not IS_WIN and own and not apppaths.in_steam_library(own):
+        # (BeamMP's launcher looks for the game in Steam's libraries only on Linux, and has no option for a folder)
+        row("Multiplayer", "BeamMP not started: on Linux BeamMP's launcher finds the game only in Steam's libraries")
+        return None
     if not bmplaunch.on_launch(user_dir, dd):
         row("Multiplayer", "BeamMP not started (turned off: BeamNG.Earth settings, \"Start BeamMP with BeamNG.Earth\")")
         return None
+    if getattr(args, "beammp_launcher", None):
+        if bmplaunch.remember(dd, args.beammp_launcher):
+            say(f"  BeamMP launcher: {bmplaunch.remembered(dd)} (kept for the next starts)")
+        else:
+            say(f"  --beammp-launcher: no {bmplaunch.EXE} at {args.beammp_launcher}")
     exe = bmplaunch.find(dd)
     if exe and not IS_WIN and bmplaunch.rebuild_due(dd) and exe == os.path.join(dd, "beammp", bmplaunch.EXE):
         import install          # (the one built here was too old for BeamMP's mod: built again from BeamMP's source)
@@ -1015,7 +1082,28 @@ def run(args):
         reload_game = running and status in ("updated", "installed", "enabled")
         row("Mod", {"current": "up to date", "enabled": "turned back on", "updated": "updated",
                     "installed": "installed", "kept": "kept the installed copy"}.get(status, status or ""))
+    if getattr(args, "game_dir", None):
+        if args.game_dir.strip().strip('"').lower() == "default":
+            apppaths.set_game_dir("default")
+            row("Game", "found as before (the chosen folder forgotten)")
+        elif apppaths.set_game_dir(args.game_dir):
+            row("Game", f"{apppaths.saved_game_dir()} (kept for the next starts)")
+        else:
+            say(f"  --game-dir: BeamNG.drive is not in {args.game_dir}")
+    if not (args.no_game or running or wine or build != "native") and not (
+            windows_game_dir() if IS_WIN else linux_game_exe()):
+        ask_game_dir()
     extra = args.extra[1:] if args.extra[:1] == ["--"] else args.extra
+    if "--cache-dir" not in extra:
+        try:
+            cache = cache_dir_arg(args.cache_dir)
+        except OSError as e:
+            problem(f"the download cache folder {args.cache_dir} cannot be made ({e}).",
+                    "Pick another folder (--cache-dir PATH), or --cache-dir default.")
+            sys.exit(1)
+        if cache:
+            extra = ["--cache-dir", cache] + extra
+            row("Download cache", cache)
     if "--port" not in extra and server_port_busy():
         problem(f"another BeamNG.Earth world server is already running (port {SERVER_PORT} is in use), maybe "
                 "left over from an earlier start.",

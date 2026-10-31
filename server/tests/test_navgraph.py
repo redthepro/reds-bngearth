@@ -71,6 +71,15 @@ class GraphTest(unittest.TestCase):
         ramp = roads.Spec(roads.LINK_M[1], "paved", False, "motorway", True)
         self.assertEqual(navgraph._lanes(navgraph.driving_width(ramp), True), (1, 0), "a ramp: one lane (GitHub #107)")
 
+    def test_nodes_on_the_curve_of_the_earth(self):
+        """10 km from the anchor the ground drawn lies ~7.8 m under the flat plane (the anchor frame's up): the nodes
+        too, not at the raw height (the AI's nodes and traffic lights stood over the ground, PR #112's finding)."""
+        g = graph([[(0, 10000), (200, 10000)]], ["primary"], centre=(100.0, 10000.0))
+        zs = np.array([n[2] for n in g["nodes"].values()])
+        self.assertTrue(len(zs))
+        drop = 10000.0 ** 2 / (2 * 6371000.0)
+        np.testing.assert_allclose(zs, 10.0 - drop, atol=0.15)
+
     def test_tunnel_stretch_left_out(self):
         f = features([[(0, 0), (300, 0)]], ["primary"], levels=[(0, -1.0, 0.4, 0.7)])
         f.rules["connectors"] = rules([(0, "A", 0.0, 0.0), (0, "B", 1.0, 1.0)])
@@ -106,7 +115,7 @@ class SignalsTest(unittest.TestCase):
                       ("cJ", "e", 0): ("cE", True)}
         import furniture
         orig = furniture.junction_controls
-        furniture.junction_controls = lambda a, k, link_ok=None, ring=None: [(x, furniture.G_STOP) for x in a]     # an all-way stop
+        furniture.junction_controls = lambda a, k, link_ok=None, ring=None, signals=None: [(x, furniture.G_STOP) for x in a]     # an all-way stop
         try:
             out = navgraph._signals(arms, approaches, nodes)
         finally:

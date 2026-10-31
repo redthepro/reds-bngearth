@@ -1,0 +1,261 @@
+{
+  "schema_version": 2,
+  "verified_on": "2026-10-26",
+  "execution_mode": "required_subagent_workflow",
+  "project_config": ".codex/config.toml",
+  "lead": {
+    "model": "gpt-6-luna",
+    "reasoning_effort": "medium"
+  },
+  "max_concurrent_subagents": 3,
+  "max_active_agents_including_lead": 4,
+  "minimum_distinct_subagents_per_phase": 2,
+  "independent_review_required": true,
+  "roles": {
+    "earth_explorer": {
+      "config": ".codex/agents/earth_explorer.toml",
+      "model": "gpt-6-luna",
+      "reasoning_effort": "medium",
+      "description": "Read-only code and documentation exploration"
+    },
+    "earth_worker": {
+      "config": ".codex/agents/earth_worker.toml",
+      "model": "gpt-6-luna",
+      "reasoning_effort": "medium",
+      "description": "Bounded implementation after interfaces are fixed"
+    },
+    "earth_specialist": {
+      "config": ".codex/agents/earth_specialist.toml",
+      "model": "gpt-6-luna",
+      "reasoning_effort": "medium",
+      "description": "Geometry, concurrency and geospatial implementation"
+    },
+    "earth_reviewer": {
+      "config": ".codex/agents/earth_reviewer.toml",
+      "model": "gpt-6-luna",
+      "reasoning_effort": "medium",
+      "description": "Independent correctness review; no source edits"
+    },
+    "earth_validator": {
+      "config": ".codex/agents/earth_validator.toml",
+      "model": "gpt-6-luna",
+      "reasoning_effort": "medium",
+      "description": "Reproducible verification and assigned test fixtures"
+    }
+  },
+  "phases": [
+    {
+      "id": "00",
+      "prompt": "prompts/00-kickoff.md",
+      "delegation_required": true,
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "medium",
+      "max_active_agents_including_lead": 4,
+      "requires": "No prior handoff. Git available; network access to the public source repository.",
+      "tasks": [
+        {
+          "task_name": "setup",
+          "role": "earth_worker",
+          "assignment": "Run/inspect the bootstrap, create only the isolated source checkout if absent, and report the revision, branch, status and supported environment requirements. Own setup operations; do not edit production code."
+        },
+        {
+          "task_name": "brief_review",
+          "role": "earth_explorer",
+          "assignment": "In parallel, read the package design and source references. Identify phase dependencies and missing preflight facts. Do not touch the checkout while it is being created."
+        },
+        {
+          "task_name": "setup_check",
+          "role": "earth_validator",
+          "assignment": "After setup finishes, independently inspect isolation, revision and proposed test commands. Verify the handoff evidence without installing the mod or starting the game."
+        }
+      ]
+    },
+    {
+      "id": "01",
+      "prompt": "prompts/01-baseline.md",
+      "delegation_required": true,
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "medium",
+      "max_active_agents_including_lead": 4,
+      "requires": "Handoff 00 complete; isolated source checkout and supported Python environment available.",
+      "tasks": [
+        {
+          "task_name": "baseline_map",
+          "role": "earth_explorer",
+          "assignment": "Inspect existing tests, diagnostics and profiling; return exact entry points and the smallest representative fixtures. Read-only."
+        },
+        {
+          "task_name": "instrumentation",
+          "role": "earth_specialist",
+          "assignment": "After the lead fixes measurement boundaries, implement assigned instrumentation and benchmark hooks. Own only the named production/diagnostic files."
+        },
+        {
+          "task_name": "baseline_validation",
+          "role": "earth_validator",
+          "assignment": "Own separate benchmark fixtures and result validation. After instrumentation stabilizes, run comparisons and check overhead independently; avoid overlapping benchmark runs."
+        }
+      ]
+    },
+    {
+      "id": "02",
+      "prompt": "prompts/02-world-plan-cache.md",
+      "delegation_required": true,
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "medium",
+      "max_active_agents_including_lead": 4,
+      "requires": "Handoff 01 complete with baseline fixtures and current tests understood.",
+      "tasks": [
+        {
+          "task_name": "geometry_map",
+          "role": "earth_explorer",
+          "assignment": "Trace terrain/road preparation, ownership and cache dependencies. Return a focused code map and current invariants. Read-only."
+        },
+        {
+          "task_name": "world_compiler",
+          "role": "earth_specialist",
+          "assignment": "After the lead freezes the shared plan/cache contract, own the common terrain path and artifact implementation plus explicitly assigned regression tests."
+        },
+        {
+          "task_name": "invariant_review",
+          "role": "earth_reviewer",
+          "assignment": "Review the proposed contract before edits, then independently review the stable implementation for seams, partial DEM upgrades, invalidation, anchor transforms and navigation support. Report actionable findings."
+        }
+      ]
+    },
+    {
+      "id": "03",
+      "prompt": "prompts/03-streaming.md",
+      "delegation_required": true,
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "medium",
+      "max_active_agents_including_lead": 4,
+      "requires": "Handoff 02 complete; stable world-plan/artifact IDs and parity tests exist.",
+      "tasks": [
+        {
+          "task_name": "streaming_map",
+          "role": "earth_explorer",
+          "assignment": "Trace worker reservations, backpressure, protocol IDs and release acknowledgments. Identify dependency boundaries and failure cases. Read-only."
+        },
+        {
+          "task_name": "streaming_impl",
+          "role": "earth_specialist",
+          "assignment": "After contract agreement, own assigned scheduling/cancellation/activation changes. Shared protocol and Lua changes are a single coordinated workstream."
+        },
+        {
+          "task_name": "race_review",
+          "role": "earth_reviewer",
+          "assignment": "Challenge starvation, stale completion, duplicate messages, bridge support and resource release. Review the stable patch independently and supply reproducing cases; no source edits."
+        }
+      ]
+    },
+    {
+      "id": "04",
+      "prompt": "prompts/04-global-data.md",
+      "delegation_required": true,
+      "model": "gpt-6.1-sol",
+      "reasoning_effort": "medium",
+      "max_active_agents_including_lead": 4,
+      "requires": "Handoff 03 complete; normalized facts and artifact invalidation contracts available.",
+      "tasks": [
+        {
+          "task_name": "provider_map",
+          "role": "earth_explorer",
+          "assignment": "Verify schemas, source versions, access paths and license evidence; propose normalization mappings with explicit missing-data semantics. Read-only."
+        },
+        {
+          "task_name": "vegetation_adapter",
+          "role": "earth_specialist",
+          "assignment": "After the lead freezes provider contracts, own GLC_FCS10 preparation/lookup, its fallback and disjoint tests."
+        },
+        {
+          "task_name": "soil_water_adapters",
+          "role": "earth_specialist",
+          "assignment": "In parallel with vegetation, own SoilGrids/JRC preparation and lookup plus disjoint tests. Do not edit the vegetation worker's or lead's shared files."
+        },
+        {
+          "task_name": "global_validation",
+          "role": "earth_validator",
+          "assignment": "After implementation workers release their slots, independently check regional-provider-disabled output, units/CRS/no-data, provenance and runtime cost."
+        }
+      ]
+    },
+    {
+      "id": "05",
+      "prompt": "prompts/05-sketchfab-catalog.md",
+      "delegation_required": true,
+      "model": "gpt-6-luna",
+      "reasoning_effort": "medium",
+      "max_active_agents_including_lead": 4,
+      "requires": "Handoff 04 complete; source/artifact contract stable; saved credential available. Download authentication may need separate OAuth support.",
+      "tasks": [
+        {
+          "task_name": "catalog_evidence",
+          "role": "earth_explorer",
+          "assignment": "Research a bounded category shortlist and model/API/license metadata without credentials. Return verifiable candidates and eligibility uncertainties; do not download models."
+        },
+        {
+          "task_name": "catalog_pipeline",
+          "role": "earth_worker",
+          "assignment": "After the lead fixes manifest/auth/conversion interfaces, own the downloader/preparation/catalog implementation. Use credentials only through the local helpers; serialize actual Blender mutations."
+        },
+        {
+          "task_name": "catalog_validation",
+          "role": "earth_validator",
+          "assignment": "Independently inspect archive safety, transforms, output budgets, attribution and failure behavior. Use fixtures first and only run conversion checks on an isolated scene after the writer is finished."
+        }
+      ]
+    },
+    {
+      "id": "06",
+      "prompt": "prompts/06-semantic-placement.md",
+      "delegation_required": true,
+      "model": "gpt-6-luna",
+      "reasoning_effort": "medium",
+      "max_active_agents_including_lead": 4,
+      "requires": "Handoffs 04 and 05 complete; approved prepared catalog and normalized facts available.",
+      "tasks": [
+        {
+          "task_name": "placement_evidence",
+          "role": "earth_explorer",
+          "assignment": "Map normalized facts to catalog categories, data gaps and conservative placement/exclusion rules. Read-only; distinguish observed objects from inferred decoration."
+        },
+        {
+          "task_name": "placement_impl",
+          "role": "earth_specialist",
+          "assignment": "After the lead freezes rule/transform/ownership contracts, own deterministic matching, compiled placements and assigned engine integration files."
+        },
+        {
+          "task_name": "placement_review",
+          "role": "earth_reviewer",
+          "assignment": "Review road clearances, seams, landmarks, rebase transforms, LOD/resource budgets and missing-model fallback independently on the stable implementation."
+        }
+      ]
+    },
+    {
+      "id": "07",
+      "prompt": "prompts/07-validation-release.md",
+      "delegation_required": true,
+      "model": "gpt-6-luna",
+      "reasoning_effort": "medium",
+      "max_active_agents_including_lead": 4,
+      "requires": "Handoffs 01–06 complete or explicitly marked with unresolved work; no release claim while required gates remain pending.",
+      "tasks": [
+        {
+          "task_name": "correctness_review",
+          "role": "earth_reviewer",
+          "assignment": "Read-only audit of geometry, cache invalidation, collision/navigation compatibility and streaming lifecycle against the pinned baseline and phase handoffs."
+        },
+        {
+          "task_name": "provenance_review",
+          "role": "earth_explorer",
+          "assignment": "Independently audit data/model licensing evidence, source versions, attribution, secret exclusion, bounded downloads and fallback completeness. Read-only."
+        },
+        {
+          "task_name": "release_validation",
+          "role": "earth_validator",
+          "assignment": "Run the agreed regression and reproducible benchmark plan on a stable revision; own only test reports/artifacts. Serialize engine use and heavy benchmarks. Re-check any fixes."
+        }
+      ]
+    }
+  ]
+}

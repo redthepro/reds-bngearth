@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "note": "Candidate centers only. Resolve and record actual drivable routes during baseline; do not assume the center is a road.",
+  "cache_modes": [
+    "cold",
+    "warm_restart",
+    "steady_drive"
+  ],
+  "scenarios": [
+    {
+      "id": "dense_urban",
+      "center_lat": 40.73,
+      "center_lon": -73.99,
+      "region": "New York, USA"
+    },
+    {
+      "id": "rural_forest",
+      "center_lat": 48.45,
+      "center_lon": 8.35,
+      "region": "Black Forest, Germany"
+    },
+    {
+      "id": "arid",
+      "center_lat": 24.45,
+      "center_lon": 54.4,
+      "region": "Abu Dhabi, UAE"
+    },
+    {
+      "id": "tropical_urban",
+      "center_lat": -1.29,
+      "center_lon": 36.82,
+      "region": "Nairobi, Kenya"
+    },
+    {
+      "id": "mountain",
+      "center_lat": -33.44,
+      "center_lon": -70.65,
+      "region": "Santiago/Andean foothills, Chile"
+    },
+    {
+      "id": "high_latitude",
+      "center_lat": 69.65,
+      "center_lon": 18.96,
+      "region": "Tromso, Norway"
+    },
+    {
+      "id": "southern_rural",
+      "center_lat": -43.54,
+      "center_lon": 172.63,
+      "region": "Canterbury, New Zealand"
+    },
+    {
+      "id": "antimeridian",
+      "synthetic": true,
+      "description": "Adjacent cells spanning +/-180 degrees; no real-world driving route assumed"
+    }
+  ],
+  "required_variants": [
+    "regional_providers_disabled",
+    "optional_sources_offline",
+    "partial_dem",
+    "late_cancelled_completion",
+    "warm_cache_after_restart"
+  ],
+  "budgets": null
+}

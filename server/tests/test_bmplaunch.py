@@ -157,6 +157,40 @@ class RenamedAside(unittest.TestCase):
             self.assertFalse([p for p in c if ".bak" in p or "-old" in p], c)
 
 
+class ElsewhereInHome(unittest.TestCase):
+    """A player's own launcher in a folder of their own (Discord, 2026-10-24: the AppImage did not find it)."""
+    def exe(self, *parts):
+        p = os.path.join(*parts, bmplaunch.EXE)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        Path(p).write_bytes(b"x")
+        os.chmod(p, 0o755)
+        return p
+
+    def test_one_folder_down(self):
+        if bmplaunch.IS_WIN:
+            return
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as data:
+            games = self.exe(home, "Games", "BeamMP-Launcher")
+            share = self.exe(home, ".local", "share", "beammp-launcher", "build")
+            c = bmplaunch.candidates(data, env={}, home=home)
+            self.assertIn(games, c)
+            self.assertIn(share, c)
+            self.assertEqual(len(c), len(set(c)), "each place once")
+
+    def test_remembered_path_wins(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as data:
+            mine = self.exe(home, "somewhere", "odd")
+            newer = self.exe(data, "beammp")
+            os.utime(mine, (1_000_000, 1_000_000))
+            self.assertIsNone(bmplaunch.remember(data, os.path.join(home, "nothing-here")))
+            self.assertEqual(bmplaunch.remember(data, ' "' + os.path.dirname(mine) + '" '), mine, "a folder: its launcher")
+            with mock.patch.object(bmplaunch.shutil, "which", return_value=None):
+                self.assertEqual(bmplaunch.find(data, env={}), mine, "the player's choice over a newer one")
+            os.remove(mine)
+            with mock.patch.object(bmplaunch.shutil, "which", return_value=None):
+                self.assertEqual(bmplaunch.find(data, env={}), newer, "gone: the others again")
+
+
 class ChildEnv(unittest.TestCase):
     def test_app_library_path_left_out(self):
         env = {"LD_LIBRARY_PATH": "/tmp/_MEI123", "LD_LIBRARY_PATH_ORIG": "/opt/lib", "APPDIR": "/tmp/.mount", "HOME": "/h"}
@@ -183,6 +217,17 @@ class OnLaunch(unittest.TestCase):
                 d = json.load(f)
             self.assertEqual(d, {"clouds": False, "beammpOnLaunch": False}, "the mod's other settings kept")
             self.assertFalse(bmplaunch.on_launch(user, data))
+
+    def test_lower_case_file(self):
+        """Linux: the game writes settings/beamngearth.json in lower case."""
+        with tempfile.TemporaryDirectory() as user:
+            os.makedirs(os.path.join(user, "settings"))
+            with open(os.path.join(user, "settings", "beamngearth.json"), "w") as f:
+                json.dump({"beammpOnLaunch": False, "skyMode": "real"}, f)
+            self.assertFalse(bmplaunch.on_launch(user))
+            bmplaunch.set_on_launch(user, True)
+            self.assertEqual(os.listdir(os.path.join(user, "settings")), ["beamngearth.json"], "the same file written")
+            self.assertTrue(bmplaunch.on_launch(user))
 
 
 class Finding(unittest.TestCase):

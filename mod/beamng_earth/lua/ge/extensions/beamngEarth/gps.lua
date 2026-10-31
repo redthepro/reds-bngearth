@@ -51,6 +51,7 @@ local pendingId, nextId = nil, 0
 local lastRequest = -math.huge
 local enu = nil         -- { anchor, x = {}, y = {}, cum = {} } of the route in the current anchor's frame
 local progress = 1      -- index of the route segment the player is on
+local progressS = nil   -- ... and the distance along the route there (routePosition: no jumps to another bend)
 local routedTo = nil    -- the node id (or 'final') the current arrows go to
 local lastCheck = -math.huge
 local info = nil        -- { dist, bearing, remaining, eta } at the last check
@@ -65,6 +66,7 @@ local paused = false    -- the AI holds the car (world server away)
 local vehGraph = {}     -- vehicle id -> the game's map buildSerial when its mapmgr last took the graph
 local pathWait = nil    -- os.clock() since a path waits for the car to have the graph it was planned on
 local targetS = nil     -- the route distance of the arrows' target
+local downloadProgress = nil   -- { total, done, active } | nil: the route's corridor prefetch (server routeahead.py)
 
 -- Pure: the id and position {x, y, z} of the node in `nodes` (map.getMap().nodes: id -> { pos = {x, y, z} })
 -- nearest (tx, ty), and its distance; nil when there are none.
@@ -146,6 +148,35 @@ function M.nearestSegment(xs, ys, px, py, i0, i1)
   return bi, bt, math.sqrt(bd)
 end
 
+-- Pure: where the car is on the route (polyline xs, ys with arc lengths cum), searched over segments [i0, i1): the
+-- segment nearest (px, py), but one that runs against the car's way (vx, vy, moving) costs WRONG_WAY_M more and a jump
+-- along the route from where the car last was (sPrev) costs JUMP_W per m beyond JUMP_FREE_M: on a winding road the
+-- route's next or last bend can pass nearer the car than its own stretch, and the target was then set from there, at
+-- times behind the car (the AI stopped and turned round: GitHub #269, Kern Canyon). Returns i, t, the distance.
+M.WRONG_WAY_M = 40
+M.JUMP_W = 0.1
+M.JUMP_FREE_M = 60
+function M.routePosition(xs, ys, cum, px, py, vx, vy, sPrev, i0, i1)
+  local moving = (vx or 0) ^ 2 + (vy or 0) ^ 2 > 9
+  local bi, bt, bd, bc = 1, 0, math.huge, math.huge
+  for i = math.max(1, i0 or 1), math.min(#xs - 1, (i1 or #xs) - 1) do
+    local ax, ay, bx, by = xs[i], ys[i], xs[i + 1], ys[i + 1]
+    local dx, dy = bx - ax, by - ay
+    local L2 = dx * dx + dy * dy
+    local t = L2 > 0 and math.max(0, math.min(1, ((px - ax) * dx + (py - ay) * dy) / L2)) or 0
+    local qx, qy = ax + t * dx - px, ay + t * dy - py
+    local d = math.sqrt(qx * qx + qy * qy)
+    local c = d
+    if moving and dx * vx + dy * vy < 0 then c = c + M.WRONG_WAY_M end
+    if sPrev then
+      local jump = math.abs(cum[i] + t * (cum[i + 1] - cum[i]) - sPrev)
+      if jump > M.JUMP_FREE_M then c = c + M.JUMP_W * (jump - M.JUMP_FREE_M) end
+    end
+    if c < bc then bi, bt, bd, bc = i, t, d, c end
+  end
+  return bi, bt, bd
+end
+
 local function clearArrows()
   local gm = rawget(_G, 'core_groundMarkers')
   if gm and gm.setPath then pcall(gm.setPath, nil) end
@@ -184,15 +215,22 @@ function M.setDestination(lat, lon, name)
   lat, lon = tonumber(lat), tonumber(lon)
   if not lat or not lon then return false end
   dest = { lat = lat, lon = lon, name = name }
-  route, routeError, pendingId, enu, progress, info = nil, nil, nil, nil, 1, nil
+  route, routeError, pendingId, enu, progress, info, progressS = nil, nil, nil, nil, 1, nil, nil
   routedTo, lastCheck, lastRequest = nil, -math.huge, -math.huge     -- plan and route at the next update
+  downloadProgress = nil         -- the previous destination's bar, not this one's (its own push is coming)
   return true
 end
 
 function M.clear()
   if auto then M.setAutodrive(false) end
   dest, route, routeError, pendingId, enu, info = nil, nil, nil, nil, nil, nil
+  downloadProgress = nil
   clearArrows()
+end
+
+-- The server's route_download push (routeahead.py): { total, done, active }.
+function M.onRouteDownload(msg)
+  downloadProgress = { total = tonumber(msg.total) or 0, done = tonumber(msg.done) or 0, active = msg.active == true }
 end
 
 function M.status()
@@ -200,8 +238,8 @@ function M.status()
   return { lat = dest.lat, lon = dest.lon, name = dest.name, dist = info and info.dist, bearing = info and info.bearing,
            remaining = info and info.remaining, eta = info and info.eta, routeVersion = route and route.version or 0,
            progress = progress, planning = pendingId ~= nil, routeError = routeError, pendingId = pendingId,
-           autodrive = auto, autoNodes = autoPath and #autoPath or nil, off = info and info.off, arrows = routedTo, replans = M.noProgressReplans,
-           recoveries = M.autoRecoveries }
+           autodrive = auto, autoNodes = autoPath and #autoPath or nil, off = info and info.off, arrows = routedTo,
+           routeDownload = downloadProgress, replans = M.noProgressReplans, recoveries = M.autoRecoveries }
 end
 
 -- The planned route for the map: { version, points = {{lat, lon}...}, dist, dur } or nil.
@@ -292,6 +330,16 @@ function M.routeSlice(e, s0, s1, step)
   return out
 end
 
+-- Pure: the planner's path counted to the destination, not to its own end: every point's distToTarget (and the
+-- planner's distance) plus the planned route's rest past the path (the minimap's and the navigation app's distance is
+-- path[1].distToTarget: a 300-mile route showed "2.7 km", the arrows' reach, Discord 2026-10-24). The planner's own
+-- updates keep it (they only drop passed points and move the first); a re-plan of its own starts from 0 again.
+function M.addRest(rp, rest)
+  if not rp or type(rp.path) ~= 'table' or not rest or rest <= 0 then return end
+  for _, wp in ipairs(rp.path) do wp.distToTarget = (wp.distToTarget or 0) + rest end
+  rp.distance = (rp.distance or 0) + rest
+end
+
 -- The planner's path (core_groundMarkers.routePlanner.path, {pos, distToTarget, wp, fixed}) goes on along the
 -- route from s0: no node of it fixed (a fixed node behind the car would make the planner re-plan back to it).
 local function appendTail(gm, e, s0, z0)
@@ -310,6 +358,8 @@ local function appendTail(gm, e, s0, z0)
     rp.path[#rp.path + 1] = { pos = vec3(x, y, z) }
   end
   rp:calcDistance()
+  local total = e.cum[#e.x]
+  M.addRest(rp, total - math.min(s0 + M.TAIL_M, total))
 end
 
 -- Pure: the graph node ids of a planner path ({wp = id | nil}...): its graph stretch, ids in order, repeats dropped.
@@ -659,9 +709,14 @@ function M.update(anchor, player)
   if route then
     local e = toEnu(anchor)
     local n = #e.x
-    local i, t, off = M.nearestSegment(e.x, e.y, player.x, player.y, progress - 5, progress + 400)
-    if off > M.OFF_ROUTE_M then i, t, off = M.nearestSegment(e.x, e.y, player.x, player.y, 1, n) end
+    local vx, vy = player.vx or 0, player.vy or 0
+    local i, t, off = M.routePosition(e.x, e.y, e.cum, player.x, player.y, vx, vy, progressS, progress - 5,
+      progress + 400)
+    if off > M.OFF_ROUTE_M then
+      i, t, off = M.routePosition(e.x, e.y, e.cum, player.x, player.y, vx, vy, progressS, 1, n)
+    end
     progress = i
+    progressS = e.cum[i] + t * (e.cum[i + 1] - e.cum[i])
     local remaining = e.cum[n] - (e.cum[i] + t * (e.cum[i + 1] - e.cum[i]))
     info.remaining = remaining + off
     info.off = off
@@ -706,7 +761,7 @@ end
 
 -- The level ended: the arrows went with it (the destination and its route stay for the next level start).
 function M.reset()
-  routedTo, info, lastCheck, enu, progress = nil, nil, -math.huge, nil, 1
+  routedTo, info, lastCheck, enu, progress, progressS = nil, nil, -math.huge, nil, 1, nil
 end
 
 return M

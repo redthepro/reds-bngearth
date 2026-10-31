@@ -653,6 +653,19 @@ class OvertureTest(Sources, SmallBlocks, unittest.TestCase):
         self.assertEqual(inf.kind.tolist(), [mg.LINE, mg.POINT])
         self.assertEqual(list(cd.layers["connectors"].ids), ["con-a", "con-b"])
 
+    def test_places_layer_reads_station_columns(self):
+        """Overture places (an optional layer: the gas stations, 2026-10-23): category, brand, status."""
+        self.assertNotIn("places", mapdata.LAYERS)
+        md, t = self.mapdata()
+        p = md.cell(mf.CELL, ("places",)).layers["places"]
+        self.assertEqual(list(p.ids), ["pla-sheetz"])
+        self.assertEqual(p.kind.tolist(), [mg.POINT])
+        self.assertEqual((p.attrs["basic_category"][0], p.attrs["taxonomy"][0], p.attrs["brand_wikidata"][0],
+                          p.attrs["brand_name"][0], p.attrs["name"][0], p.attrs["operating_status"][0],
+                          p.attrs["src_dataset"][0]),
+                         ("convenience_store", "convenience_store", "Q7492551", "Sheetz", "Sheetz", "open", "meta"))
+        self.assertAlmostEqual(float(p.attrs["confidence"][0]), 0.92, places=5)
+
     def test_build_owned_covers_every_feature_once(self):
         """'Build the owned features of every cell' builds each whole feature once and every piece
         of a clipped polygon once: the park (3 x 3 cells) and the harbour (2 x 2) come out whole,
@@ -814,6 +827,24 @@ class CacheTest(Sources, SmallBlocks, unittest.TestCase):
         self.assertEqual(md3.cell(mf.CELL).digest(), cd.digest())
         with self.assertRaises(netfetch.Offline):
             md3.cell(mapcells.cell_of(10.0, 10.0), ("landcover",))
+
+    def test_warm_builds_ahead(self):
+        # warm() builds the asked (cell, layer)s into the cache in the background; the cell() after it reads them back
+        # without fetching, and what is cached or queued is not queued again
+        md, t = self.mapdata()
+        with mock.patch.object(mapdata, "WARM_THREADS", 0):
+            self.assertEqual(md.warm([(mf.CELL, "roads")]), 0, "few CPUs: nothing ahead")
+        with mock.patch.object(mapdata, "WARM_THREADS", 2):
+            self.assertEqual(md.warm([(mf.CELL, "roads"), (mf.CELL, "water"), (mf.CELL, "roads")]), 2)
+        md._warm_ex.shutdown(wait=True)
+        self.assertTrue(md.has(mf.CELL, "roads") and md.has(mf.CELL, "water"))
+        n = t.count()
+        cd = md.cell(mf.CELL, ("roads", "water"))
+        self.assertTrue(all(s["hit"] for s in cd.stats.values()))
+        self.assertEqual(t.count(), n)
+        with mock.patch.object(mapdata, "WARM_THREADS", 2):
+            self.assertEqual(md.warm([(mf.CELL, "roads")]), 0)
+        self.assertEqual(md._warming, set())
 
     def test_a_deferred_osm_prefetch_is_not_cached(self):
         # the OSM tags' host had no room for a prefetch: the roads are not built (prefetch False) rather than cached for

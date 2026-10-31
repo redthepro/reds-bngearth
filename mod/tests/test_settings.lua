@@ -418,4 +418,31 @@ do
   for k, v in pairs(saved) do rawset(_G, k, v) end
 end
 
+-- The map's hold on the controls goes when the map stops asking for its state (its close lost, GitHub #252) or a level
+-- starts, never while it asks
+do
+  local pops, popped = 0, {}
+  local filter = { createActionTemplate = function() return {} end, setGroup = function() end,
+    addAction = function(_, group, on) popped[#popped + 1] = on end }
+  local saved = { core_input_actionFilter = rawget(_G, 'core_input_actionFilter'), freeroam_bigMapMode = rawget(_G, 'freeroam_bigMapMode'),
+    pushActionMap = rawget(_G, 'pushActionMap'), popActionMap = rawget(_G, 'popActionMap'), clock = os.clock }
+  local now = 100
+  os.clock = function() return now end
+  core_input_actionFilter, freeroam_bigMapMode = filter, {}
+  pushActionMap, popActionMap = function() end, function() pops = pops + 1 end
+  settings.mapOpened(true)
+  T.check(popped[1] == true, 'map open: the driving actions blocked')
+  for _ = 1, 8 do now = now + 1; pcall(settings.uiMapState); settings.onUpdate() end
+  T.check(pops == 0 and settings.isMapOpen(), 'map asking every second: held (pops ' .. pops .. ', open ' .. tostring(settings.isMapOpen()) .. ')')
+  now = now + settings.MAP_LOST_S + 0.5
+  settings.onUpdate()
+  T.check(pops == 1 and popped[#popped] == false and not settings.isMapOpen(), 'map silent: the controls given back')
+  settings.mapOpened(true)
+  settings.onClientPostStartMission()
+  T.check(pops == 2 and popped[#popped] == false, 'a level start: given back')
+  os.clock = saved.clock
+  saved.clock = nil
+  for k, v in pairs(saved) do rawset(_G, k, v) end
+end
+
 T.done('test_settings')

@@ -12,6 +12,72 @@ import voice
 
 
 class VoiceTest(unittest.TestCase):
+    def test_selected_device_reopens_engine_and_reports_resolved_names(self):
+        engines, notices = [], []
+        class Engine:
+            def __init__(self, input_name, output_name):
+                self.names = (input_name or 'Default mic', output_name or 'Default headset')
+                self.closed = False
+                engines.append(self)
+            def selected_devices(self): return self.names
+            def close(self): self.closed = True
+            def set_ptt(self, mode): pass
+            def take_encoded(self): return []
+            def microphone_level(self): return (0., False)
+            def last_error(self): return ''
+        class Client:
+            def __init__(self, *args): self.ready = False
+            def connect(self): self.ready = True
+            def close(self): self.ready = False
+            def poll(self): pass
+            def set_targets(self, *args): pass
+        native = SimpleNamespace(AudioEngine=Engine, device_info=lambda: (
+            ['Default mic', 'USB mic'], ['Default headset', 'Speakers'], 'Default mic', 'Default headset'))
+        manager = voice.VoiceManager(notices.append)
+        def wait_for(condition):
+            until = time.monotonic()+3
+            while not condition() and time.monotonic()<until: time.sleep(.01)
+            self.assertTrue(condition())
+        with patch.dict(sys.modules, {'earthvoice': native}), patch.object(voice, 'MumbleClient', Client):
+            try:
+                manager.handle({'action':'control', 'data':{'enabled':True}})
+                manager.handle({'action':'session', 'data':{'base':3000, 'host':'test', 'port':1,
+                                                          'fingerprint':'test', 'token':'private'}})
+                wait_for(lambda: bool(notices) and notices[-1]['deviceActive'].get('input') == 'Default mic')
+                manager.handle({'action':'control', 'data':{'enabled':True, 'input':'USB mic', 'output':'Speakers'}})
+                wait_for(lambda: notices[-1]['deviceActive'].get('input') == 'USB mic')
+                self.assertTrue(engines[0].closed)
+                self.assertEqual(engines[-1].names, ('USB mic', 'Speakers'))
+                self.assertEqual(notices[-1]['deviceActive']['output'], 'Speakers')
+                # Repeating the same selection must not churn the audio streams.
+                manager.handle({'action':'control', 'data':{'enabled':True, 'input':'USB mic', 'output':'Speakers'}})
+                manager.handle({'action':'control', 'data':{'enabled':False}})
+                wait_for(lambda: notices[-1]['enabled'] is False)
+                self.assertEqual(len(engines), 2)
+                self.assertTrue(engines[-1].closed)
+                self.assertEqual(notices[-1]['deviceActive'], {})
+            finally:
+                manager.close(); manager.thread.join(3)
+
+    def test_device_enumeration_works_while_muted_without_opening_streams(self):
+        notices = []
+        def forbidden(*args): raise AssertionError('Enumeration must not open audio streams')
+        native = SimpleNamespace(AudioEngine=forbidden, device_info=lambda: (
+            ['USB microphone'], ['Headset','Speakers'], 'USB microphone', 'Headset'))
+        manager = voice.VoiceManager(notices.append)
+        with patch.dict(sys.modules, {'earthvoice': native}):
+            try:
+                manager.handle({'action':'devices'})
+                until=time.monotonic()+3
+                while not notices and time.monotonic()<until: time.sleep(.01)
+                self.assertTrue(notices)
+                self.assertEqual(notices[-1]['deviceDefaults'], {'input':'USB microphone','output':'Headset'})
+                self.assertEqual(notices[-1]['outputs'], ['Headset','Speakers'])
+                self.assertFalse(notices[-1]['enabled'])
+                self.assertEqual(notices[-1]['deviceActive'], {})
+            finally:
+                manager.close(); manager.thread.join(3)
+
     def test_global_membership_and_private_mic_test_expire_without_broadcast(self):
         engines, clients, notices = [], [], []
 

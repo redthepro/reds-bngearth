@@ -3,7 +3,10 @@ import concurrent.futures
 import threading
 import unittest
 
-from server.workcontrol import Budget
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from workcontrol import Budget
 
 
 class WorkControlTest(unittest.TestCase):

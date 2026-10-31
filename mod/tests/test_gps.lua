@@ -11,11 +11,30 @@ T.check(G.setDestination(39.28, -76.59, 'x') and G.status().name == 'x', 'destin
 T.check(not G.setDestination(nil, 1), 'a bad destination refused')
 G.clear()
 T.check(G.status() == nil, 'cleared')
+T.check(G.setDestination(39.28, -76.59, 'x'), 'destination set again')
+G.onRouteDownload({ total = 10, done = 3, active = true })
+local rd = G.status().routeDownload
+T.check(rd.total == 10 and rd.done == 3 and rd.active == true, 'the route_download push reaches status()')
+G.clear()
+T.check(G.status() == nil, 'cleared again (routeDownload gone with the rest)')
+T.check(G.setDestination(39.28, -76.59, 'y') and G.status().routeDownload == nil,
+  'a fresh destination starts without the previous one\'s download bar')
 local xs, ys = { 0, 100, 100 }, { 0, 0, 100 }
 local si, st, sd = G.nearestSegment(xs, ys, 50, 10)
 T.check(si == 1 and math.abs(st - 0.5) < 1e-9 and math.abs(sd - 10) < 1e-9, 'on the first segment, halfway, 10 m off')
 si, st, sd = G.nearestSegment(xs, ys, 120, 60)
 T.check(si == 2 and math.abs(st - 0.6) < 1e-9 and math.abs(sd - 20) < 1e-9, 'on the second segment')
+-- a hairpin (GitHub #269): the route goes east along y = 0, turns, and comes back west along y = 20; a car at (100, 12)
+-- driving east, last seen 90 m along: on the way out (the way back passes nearer, 8 m, but runs against it)
+do
+  local hx, hy, hc = { 0, 200, 200, 0 }, { 0, 0, 20, 20 }, { 0, 200, 220, 420 }
+  local ri, rt, rd = G.routePosition(hx, hy, hc, 100, 12, 15, 0, 90, 1, 4)
+  T.check(ri == 1 and math.abs(rt - 0.5) < 1e-9 and math.abs(rd - 12) < 1e-9, 'hairpin: the car on its own stretch')
+  ri = G.routePosition(hx, hy, hc, 100, 12, 0, 0, nil, 1, 4)
+  T.check(ri == 3, 'standing, nothing known: the nearest stretch as before')
+  ri = G.routePosition(hx, hy, hc, 100, 12, -15, 0, 300, 1, 4)
+  T.check(ri == 3, 'on the way back (driving west, last seen 300 m along): that stretch')
+end
 local gnodes = { a = { pos = { x = 0, y = 0, z = 1 }, links = { b = {} } }, b = { pos = { x = 200, y = 0, z = 3 }, links = { a = {} } } }
 local segs = G.edgeSegments(gnodes)
 T.check(#segs == 1, 'one edge, once')
@@ -139,5 +158,13 @@ do -- the route request carries the car's heading (a nil global here once broke 
   T.check(got and got.b == 90, 'the route request has the heading east: ' .. tostring(got and got.b))
   G.clear()
   beamngEarth_core, getPlayerVehicle = savedCore, savedGet
+end
+do -- the minimap's distance counts the whole planned route, not only the arrows' reach
+  local rp = { path = { { distToTarget = 2700 }, { distToTarget = 1000 }, { distToTarget = 0 } }, distance = 2700 }
+  G.addRest(rp, 480000)
+  T.check(rp.path[1].distToTarget == 482700 and rp.path[3].distToTarget == 480000 and rp.distance == 482700,
+    'the rest of the route added to every point')
+  G.addRest(rp, 0)
+  T.check(rp.path[1].distToTarget == 482700, 'nothing left past the path: unchanged')
 end
 T.done('test_gps')

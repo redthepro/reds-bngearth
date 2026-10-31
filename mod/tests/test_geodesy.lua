@@ -200,4 +200,19 @@ do
   T.check(nx * (0 - se) + ny * (-3000 - sn) > 0, 'past the South Pole, north points away from it')
 end
 
+do -- teleport anchors on their grid (snapAnchor): the same cell, the same anchor; the car within ~0.8 km
+  local a1, o1 = g.snapAnchor(39.28071, -76.56112)
+  local a2, o2 = g.snapAnchor(39.27951, -76.55891)
+  T.check(a1 == a2 and o1 == o2, 'two spots in one grid cell share an anchor')
+  T.near(a1, 39.28, 1e-9, 'latitude on the 0.01 deg grid')
+  for _, p in ipairs({ { 39.28449, -76.56499 }, { 0.004, 179.996 }, { 64.1, -21.9 }, { -78.3, 166.7 }, { 84.9, 10 } }) do
+    local la, lo = g.snapAnchor(p[1], p[2])
+    local e, n = g.newAnchor(la, lo):geodeticToEnu(p[1], p[2], 0)
+    T.check(math.sqrt(e * e + n * n) < 900, string.format('%.3f, %.3f lands within 900 m of its anchor', p[1], p[2]))
+    T.check(lo >= -180 and lo < 180, 'longitude kept in [-180, 180)')
+  end
+  local la, lo = g.snapAnchor(88.5, 12.345)
+  T.check(la == 88.5 and lo == 12.345, 'not snapped near the poles')
+end
+
 T.done('test_geodesy')

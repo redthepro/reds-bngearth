@@ -119,5 +119,31 @@ class WarmTest(unittest.TestCase):
             staging.warm(os.path.join(game, "missing.cdae"))
 
 
+class ReadHeldTest(unittest.TestCase):
+    """Windows: a cache file being replaced cannot be opened for a moment (GitHub #240 / #241)."""
+    def test_tried_again(self):
+        from unittest import mock
+        tries = []
+
+        def read():
+            tries.append(1)
+            if len(tries) < 3:
+                raise PermissionError(13, "Permission denied")
+            return "data"
+        with mock.patch.object(staging, "READ_WAITS", (0, 0, 0)):
+            self.assertEqual(staging.read_held(read), "data")
+            self.assertEqual(len(tries), 3)
+
+            def held():
+                raise PermissionError(13, "Permission denied")
+            with self.assertRaises(PermissionError):
+                staging.read_held(held)
+
+            def gone():
+                raise FileNotFoundError(2, "gone")
+            with self.assertRaises(FileNotFoundError):
+                staging.read_held(gone)
+
+
 if __name__ == "__main__":
     unittest.main()

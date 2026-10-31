@@ -163,6 +163,12 @@
       <span v-else-if="state.gps.remaining != null" class="gps-dist">{{ fmtMiles(state.gps.remaining) }}<template
         v-if="state.gps.eta != null">, {{ fmtDur(state.gps.eta) }}</template></span>
       <span v-if="state.gps.routeError && !routePts.length" class="gps-warn" :title="state.gps.routeError">no road route: heading straight there</span>
+      <span v-if="state.gps.routeDownload && state.gps.routeDownload.active" class="gps-download"
+            title="Downloading the route's road and elevation data ahead of time so driving it is smoother">
+        <span class="gps-download-bar"><span class="gps-download-fill" :style="{ width: (state.gps.routeDownload.total
+          ? (100 * state.gps.routeDownload.done / state.gps.routeDownload.total) : 0) + '%' }"></span></span>
+        {{ state.gps.routeDownload.done }} / {{ state.gps.routeDownload.total }}
+      </span>
       <button class="map-btn small" @click="showOnMap(state.gps)">Show</button>
       <button class="map-btn small" :disabled="!!state.cannotGo" @click="teleportNow(state.gps.lat, state.gps.lon, state.gps.name)">Teleport</button>
       <button class="map-btn small" :class="{ primary: state.gps.autodrive }" @click="setAutodrive(!state.gps.autodrive)"
@@ -495,7 +501,9 @@ const countryLabels = computed(() => {
 })
 const placeLabels = computed(() => {
   const v = view.value
-  return layersOn.value && v.z < 15 ? mm.visibleLabels(placePoints, v.lat, v.lon, v.z, w.value, h.value, { max: 80, norm: placeNorm }) : []
+  // no z < 15 cap (the user, 2026-10-22: zoomed in past it, every place's name should stay, not just vanish):
+  // placeMinZoom's highest value is ~9.7 (scalerank 8, not a capital), so nothing new appears past z ~10 anyway
+  return layersOn.value ? mm.visibleLabels(placePoints, v.lat, v.lon, v.z, w.value, h.value, { max: 80, norm: placeNorm }) : []
 })
 
 // the lat/lon grid: a step that gives lines ~120-300 px apart
@@ -1298,6 +1306,9 @@ const fmtLatLon = mm.fmtLatLon
 }
 .gps-dist { color: #9fd3ff; }
 .gps-warn { color: #ffb08a; font-size: 12px; }
+.gps-download { display: flex; gap: 6px; align-items: center; color: #9fd3ff; font-size: 12px; }
+.gps-download-bar { width: 60px; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.15); overflow: hidden; }
+.gps-download-fill { display: block; height: 100%; background: #36a3ff; transition: width 0.2s linear; }
 .map-grid polyline { fill: none; stroke-linejoin: round; stroke-linecap: round; }
 .map-grid .route-line-casing { stroke: rgba(10, 40, 80, 0.85); stroke-width: 8; }
 .map-grid .route-line { stroke: #3aa0ff; stroke-width: 5; }

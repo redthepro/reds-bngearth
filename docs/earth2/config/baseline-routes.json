@@ -1,0 +1,695 @@
+{
+  "schema_version": 1,
+  "resolver_revision": "191b7086e1c1cefa054a28d8665dfb1ae764af6bb60103e5b65b6a7c276defc9",
+  "attribution": "© OpenStreetMap contributors",
+  "license": "ODbL-1.0",
+  "license_url": "https://opendatacommons.org/licenses/odbl/1-0/",
+  "copyright_url": "https://www.openstreetmap.org/copyright",
+  "endpoint": "https://api.openstreetmap.org/api/0.6/map",
+  "provider": "osm-map",
+  "coordinate_reference": "WGS84 latitude/longitude degrees; no elevations supplied",
+  "vehicle": {
+    "selection": "Ibishu Covet, stock base manual (proposed)",
+    "actual_config": null
+  },
+  "engine_protocol": {
+    "speed_m_s": 10,
+    "weather": "clear fixed noon (proposed)",
+    "resolution": null,
+    "graphics": null,
+    "game_version": null,
+    "status": "unrun; record actual vehicle/config/settings before comparisons"
+  },
+  "routes": [
+    {
+      "scenario_id": "dense_urban",
+      "scenario_center_lat_lon": [
+        40.73,
+        -73.99
+      ],
+      "query": "GET https://api.openstreetmap.org/api/0.6/map?bbox=-73.99149999999999,40.7285,-73.9885,40.7315",
+      "raw_path": "C:\\Users\\Culle\\AppData\\Local\\beamng-earth-2\\benchmarks\\01-baseline\\routes-osm-map\\dense_urban-9c77c2086884.osm",
+      "category_coverage": "unverified; scenario label is not source or engine evidence",
+      "query_sha256": "9c77c2086884873556cb86be558da5c7fb0d02ae700ab160831e503defeb6b93",
+      "osm_way_id": 5671095,
+      "osm_version": 23,
+      "osm_timestamp": "2026-03-17T21:50:06Z",
+      "tags": {
+        "attraction": "yes",
+        "cycleway:both": "no",
+        "highway": "residential",
+        "lane_markings": "no",
+        "lanes": "1",
+        "lit": "yes",
+        "maxspeed": "25 mph",
+        "name": "Stuyvesant Street",
+        "oneway": "yes",
+        "sidewalk:both": "separate",
+        "surface": "asphalt",
+        "wikidata": "Q7629278",
+        "wikipedia": "en:Stuyvesant Street"
+      },
+      "node_ids": [
+        42443296,
+        4235733230,
+        12179565618,
+        4235733228,
+        42443298
+      ],
+      "coordinates_lat_lon": [
+        [
+          40.7298613,
+          -73.989692
+        ],
+        [
+          40.7298733,
+          -73.9895109
+        ],
+        [
+          40.7298981,
+          -73.989138
+        ],
+        [
+          40.7299045,
+          -73.9890572
+        ],
+        [
+          40.7299155,
+          -73.9889177
+        ]
+      ],
+      "length_m": 65.52,
+      "nearest_vertex_to_center_m": 30.19,
+      "direction": "OSM way order, reversed only for oneway=-1",
+      "status": "source_resolved_engine_drivability_pending",
+      "raw_sha256": "cfa6b207f708fe1509541fd056efcf73377be75ab2c5edec8300f73eed11d9f7",
+      "raw_bytes": 1005666,
+      "osm_base_timestamp": null,
+      "saved_file_mtime_utc": "2026-10-26T18:28:05.282973+00:00",
+      "acquisition_time_note": "Local saved-file mtime; copied files may have later mtime. OSM element timestamps/version are retained separately."
+    },
+    {
+      "scenario_id": "rural_forest",
+      "scenario_center_lat_lon": [
+        48.45,
+        8.35
+      ],
+      "query": "GET https://api.openstreetmap.org/api/0.6/map?bbox=8.3425,48.4425,8.3575,48.4575",
+      "raw_path": "C:\\Users\\Culle\\AppData\\Local\\beamng-earth-2\\benchmarks\\01-baseline\\routes-osm-map\\rural_forest-c3bf4f18ff44.osm",
+      "category_coverage": "unverified; scenario label is not source or engine evidence",
+      "query_sha256": "c3bf4f18ff44f9c93b830d0b6aad9a03f2479aa60f351dcce22951049ecc871d",
+      "osm_way_id": 727578016,
+      "osm_version": 8,
+      "osm_timestamp": "2025-08-24T14:47:45Z",
+      "tags": {
+        "highway": "secondary",
+        "lanes": "2",
+        "lit": "no",
+        "maxspeed": "100",
+        "ref": "L 404",
+        "surface": "asphalt"
+      },
+      "node_ids": [
+        31110431,
+        4916820858,
+        31110432,
+        255718871,
+        31110433,
+        31110434,
+        31110435,
+        255718874,
+        4916820852,
+        31110436,
+        4916820851,
+        255718873,
+        4916820850,
+        31110437,
+        255718876,
+        31110438,
+        4916820849,
+        31110439,
+        4916820848,
+        31110440,
+        31110441,
+        4916820846,
+        31110442,
+        255718875,
+        4916820847,
+        31110443,
+        1358108154,
+        31110444,
+        4916820845,
+        31110445,
+        4916820869,
+        255718878,
+        255718877,
+        4916820870,
+        31110446,
+        4916820871,
+        31110447,
+        4916820872,
+        1678965612,
+        255718880,
+        255718879,
+        1678965616,
+        4916820867,
+        31110448,
+        1678965617,
+        255718882
+      ],
+      "coordinates_lat_lon": [
+        [
+          48.4450981,
+          8.3491779
+        ],
+        [
+          48.4451416,
+          8.3489992
+        ],
+        [
+          48.4451396,
+          8.3488507
+        ],
+        [
+          48.4451058,
+          8.3487389
+        ],
+        [
+          48.4450474,
+          8.3486737
+        ],
+        [
+          48.4449498,
+          8.3486291
+        ],
+        [
+          48.4445784,
+          8.3486415
+        ],
+        [
+          48.4441702,
+          8.3486839
+        ],
+        [
+          48.4440385,
+          8.3486921
+        ],
+        [
+          48.4438857,
+          8.3486574
+        ],
+        [
+          48.4437022,
+          8.3485901
+        ],
+        [
+          48.4435246,
+          8.3484964
+        ],
+        [
+          48.4433019,
+          8.3483407
+        ],
+        [
+          48.4431302,
+          8.3481441
+        ],
+        [
+          48.4429844,
+          8.3479216
+        ],
+        [
+          48.4428446,
+          8.3476003
+        ],
+        [
+          48.4426809,
+          8.3471257
+        ],
+        [
+          48.4425582,
+          8.3466917
+        ],
+        [
+          48.4424603,
+          8.3461252
+        ],
+        [
+          48.4423955,
+          8.3456407
+        ],
+        [
+          48.4422837,
+          8.3446979
+        ],
+        [
+          48.4422543,
+          8.3444998
+        ],
+        [
+          48.4422051,
+          8.3443253
+        ],
+        [
+          48.4421412,
+          8.3442292
+        ],
+        [
+          48.4420435,
+          8.3441538
+        ],
+        [
+          48.4419381,
+          8.3441228
+        ],
+        [
+          48.4418373,
+          8.3441195
+        ],
+        [
+          48.4415211,
+          8.3441325
+        ],
+        [
+          48.4412196,
+          8.3442101
+        ],
+        [
+          48.4409188,
+          8.344353
+        ],
+        [
+          48.4407402,
+          8.3444059
+        ],
+        [
+          48.4405145,
+          8.3444515
+        ],
+        [
+          48.4402526,
+          8.3444507
+        ],
+        [
+          48.4399786,
+          8.3443925
+        ],
+        [
+          48.4397543,
+          8.3443146
+        ],
+        [
+          48.4393469,
+          8.3441698
+        ],
+        [
+          48.4389279,
+          8.3439913
+        ],
+        [
+          48.4387099,
+          8.343856
+        ],
+        [
+          48.4385108,
+          8.3436499
+        ],
+        [
+          48.438341,
+          8.3434012
+        ],
+        [
+          48.4381611,
+          8.3430458
+        ],
+        [
+          48.4380554,
+          8.3427754
+        ],
+        [
+          48.4379572,
+          8.3424747
+        ],
+        [
+          48.4378755,
+          8.3421623
+        ],
+        [
+          48.4378039,
+          8.341772
+        ],
+        [
+          48.4377755,
+          8.3414615
+        ]
+      ],
+      "length_m": 1183.91,
+      "nearest_vertex_to_center_m": 545.25,
+      "direction": "OSM way order, reversed only for oneway=-1",
+      "status": "source_resolved_engine_drivability_pending",
+      "raw_sha256": "fc63d8c5a18b1ca0a8425bdaddaa5abf4a6e3c54ce94fd0f98eb85d4726c5dbe",
+      "raw_bytes": 549066,
+      "osm_base_timestamp": null,
+      "saved_file_mtime_utc": "2026-10-26T18:28:07.081472+00:00",
+      "acquisition_time_note": "Local saved-file mtime; copied files may have later mtime. OSM element timestamps/version are retained separately."
+    },
+    {
+      "scenario_id": "arid",
+      "scenario_center_lat_lon": [
+        24.45,
+        54.4
+      ],
+      "query": "GET https://api.openstreetmap.org/api/0.6/map?bbox=54.3985,24.4485,54.4015,24.4515",
+      "raw_path": "C:\\Users\\Culle\\AppData\\Local\\beamng-earth-2\\benchmarks\\01-baseline\\routes-osm-map\\arid-f662c429b0ff.osm",
+      "category_coverage": "unverified; scenario label is not source or engine evidence",
+      "query_sha256": "f662c429b0ff160aa97ac5e0db89fa4214d7dce55e79b063be11b5305f29f57e",
+      "osm_way_id": 24293437,
+      "osm_version": 14,
+      "osm_timestamp": "2025-07-31T12:24:46Z",
+      "tags": {
+        "highway": "residential",
+        "maxspeed": "40",
+        "name": "شارع عَمَّان",
+        "name:ar": "شارع عَمَّان",
+        "name:en": "Amman Street",
+        "old_name": "شارع الغِزِير",
+        "old_name:en": "Al Ghizeer Street",
+        "oneway": "no",
+        "surface": "asphalt"
+      },
+      "node_ids": [
+        10253120966,
+        1820400052,
+        1376421350,
+        10875255920,
+        10875225599,
+        1373998404,
+        263052001
+      ],
+      "coordinates_lat_lon": [
+        [
+          24.4499977,
+          54.3999311
+        ],
+        [
+          24.4496703,
+          54.400244
+        ],
+        [
+          24.4490011,
+          54.4008725
+        ],
+        [
+          24.4483714,
+          54.4014639
+        ],
+        [
+          24.4471325,
+          54.4026274
+        ],
+        [
+          24.4469195,
+          54.4028274
+        ],
+        [
+          24.4466419,
+          54.4031069
+        ]
+      ],
+      "length_m": 492.55,
+      "nearest_vertex_to_center_m": 6.98,
+      "direction": "OSM way order, reversed only for oneway=-1",
+      "status": "source_resolved_engine_drivability_pending",
+      "raw_sha256": "59e180507185f9eb4c595a2af180c2bca4b2628f625a4a8203aadb3b5cc8fa13",
+      "raw_bytes": 214860,
+      "osm_base_timestamp": null,
+      "saved_file_mtime_utc": "2026-10-26T18:28:05.283973+00:00",
+      "acquisition_time_note": "Local saved-file mtime; copied files may have later mtime. OSM element timestamps/version are retained separately."
+    },
+    {
+      "scenario_id": "tropical_urban",
+      "scenario_center_lat_lon": [
+        -1.29,
+        36.82
+      ],
+      "query": "GET https://api.openstreetmap.org/api/0.6/map?bbox=36.8185,-1.2915,36.8215,-1.2885",
+      "raw_path": "C:\\Users\\Culle\\AppData\\Local\\beamng-earth-2\\benchmarks\\01-baseline\\routes-osm-map\\tropical_urban-8db20a98c3d8.osm",
+      "category_coverage": "unverified; scenario label is not source or engine evidence",
+      "query_sha256": "8db20a98c3d8e8241e3f0432fa8468c2eae29b668f9bf9c90a39fa08298d5dde",
+      "osm_way_id": 4741908,
+      "osm_version": 13,
+      "osm_timestamp": "2026-08-06T13:38:26Z",
+      "tags": {
+        "highway": "residential",
+        "lanes": "4",
+        "maxspeed": "50",
+        "motor_vehicle": "permissive",
+        "name": "Parliament Road",
+        "oneway": "yes",
+        "surface": "asphalt"
+      },
+      "node_ids": [
+        6511884672,
+        7396665837,
+        6371532804,
+        6396673701,
+        2488917701,
+        2468887706,
+        30215008
+      ],
+      "coordinates_lat_lon": [
+        [
+          -1.2899369,
+          36.8208223
+        ],
+        [
+          -1.2896053,
+          36.8206626
+        ],
+        [
+          -1.2895778,
+          36.8206482
+        ],
+        [
+          -1.2890888,
+          36.8204094
+        ],
+        [
+          -1.2889055,
+          36.8203171
+        ],
+        [
+          -1.2886326,
+          36.8201792
+        ],
+        [
+          -1.2882198,
+          36.8199553
+        ]
+      ],
+      "length_m": 213.92,
+      "nearest_vertex_to_center_m": 85.74,
+      "direction": "OSM way order, reversed only for oneway=-1",
+      "status": "source_resolved_engine_drivability_pending",
+      "raw_sha256": "81b4d1823cccf45732f3af1b97ec11b486aa8fed8219876157b97e5c703b9370",
+      "raw_bytes": 434752,
+      "osm_base_timestamp": null,
+      "saved_file_mtime_utc": "2026-10-26T18:28:05.284973+00:00",
+      "acquisition_time_note": "Local saved-file mtime; copied files may have later mtime. OSM element timestamps/version are retained separately."
+    },
+    {
+      "scenario_id": "mountain",
+      "scenario_center_lat_lon": [
+        -33.44,
+        -70.65
+      ],
+      "query": "GET https://api.openstreetmap.org/api/0.6/map?bbox=-70.6515,-33.4415,-70.64850000000001,-33.4385",
+      "raw_path": "C:\\Users\\Culle\\AppData\\Local\\beamng-earth-2\\benchmarks\\01-baseline\\routes-osm-map\\mountain-2ec7799a6103.osm",
+      "category_coverage": "unverified; scenario label is not source or engine evidence",
+      "query_sha256": "2ec7799a6103f6001a7cfc3de97551d4a0bcfbb6511ea45bd80fde705d8568af",
+      "osm_way_id": 679088117,
+      "osm_version": 16,
+      "osm_timestamp": "2026-02-13T15:14:11Z",
+      "tags": {
+        "highway": "secondary",
+        "lanes": "2",
+        "lit": "yes",
+        "maxspeed": "50",
+        "name": "Agustinas",
+        "oneway": "yes",
+        "sidewalk": "both",
+        "surface": "asphalt"
+      },
+      "node_ids": [
+        10690506941,
+        271278905,
+        13556040770,
+        7569089243,
+        386318
+      ],
+      "coordinates_lat_lon": [
+        [
+          -33.4407622,
+          -70.6506944
+        ],
+        [
+          -33.4406977,
+          -70.6499656
+        ],
+        [
+          -33.4406544,
+          -70.649476
+        ],
+        [
+          -33.440653,
+          -70.6494604
+        ],
+        [
+          -33.4406451,
+          -70.649365
+        ]
+      ],
+      "length_m": 124.04,
+      "nearest_vertex_to_center_m": 77.65,
+      "direction": "OSM way order, reversed only for oneway=-1",
+      "status": "source_resolved_engine_drivability_pending",
+      "raw_sha256": "982b1e75f173c701b6b167df035bad9118742982bf6f7dce2b2751ae726c7a9e",
+      "raw_bytes": 499585,
+      "osm_base_timestamp": null,
+      "saved_file_mtime_utc": "2026-10-26T18:28:05.285973+00:00",
+      "acquisition_time_note": "Local saved-file mtime; copied files may have later mtime. OSM element timestamps/version are retained separately."
+    },
+    {
+      "scenario_id": "high_latitude",
+      "scenario_center_lat_lon": [
+        69.65,
+        18.96
+      ],
+      "query": "GET https://api.openstreetmap.org/api/0.6/map?bbox=18.9585,69.64850000000001,18.9615,69.6515",
+      "raw_path": "C:\\Users\\Culle\\AppData\\Local\\beamng-earth-2\\benchmarks\\01-baseline\\routes-osm-map\\high_latitude-958dad8c4db3.osm",
+      "category_coverage": "unverified; scenario label is not source or engine evidence",
+      "query_sha256": "958dad8c4db35f84544d8b8492e56e5ff6ed5af27e3a4a0f83f749724d312fad",
+      "osm_way_id": 22901544,
+      "osm_version": 14,
+      "osm_timestamp": "2025-06-28T14:56:31Z",
+      "tags": {
+        "cycleway:both": "no",
+        "highway": "unclassified",
+        "lane_markings": "no",
+        "lit": "yes",
+        "maxspeed": "30",
+        "name": "Killengreens gate",
+        "sidewalk:both": "separate",
+        "smoothness": "good",
+        "surface": "asphalt"
+      },
+      "node_ids": [
+        20910432,
+        11083918415,
+        11085229075,
+        9887018354,
+        5660074075,
+        9887018355
+      ],
+      "coordinates_lat_lon": [
+        [
+          69.6496357,
+          18.9587166
+        ],
+        [
+          69.6496581,
+          18.9588263
+        ],
+        [
+          69.6496809,
+          18.9589144
+        ],
+        [
+          69.6496912,
+          18.9589681
+        ],
+        [
+          69.6497616,
+          18.9593285
+        ],
+        [
+          69.6499514,
+          18.9603576
+        ]
+      ],
+      "length_m": 72.57,
+      "nearest_vertex_to_center_m": 14.85,
+      "direction": "OSM way order, reversed only for oneway=-1",
+      "status": "source_resolved_engine_drivability_pending",
+      "raw_sha256": "f6cb3bd676310eeae940d01b8bbd4fe267f8ecdcf76d9159c92b7c1fbfd7bf82",
+      "raw_bytes": 502001,
+      "osm_base_timestamp": null,
+      "saved_file_mtime_utc": "2026-10-26T18:28:05.285973+00:00",
+      "acquisition_time_note": "Local saved-file mtime; copied files may have later mtime. OSM element timestamps/version are retained separately."
+    },
+    {
+      "scenario_id": "southern_rural",
+      "scenario_center_lat_lon": [
+        -43.54,
+        172.63
+      ],
+      "query": "GET https://api.openstreetmap.org/api/0.6/map?bbox=172.6285,-43.5415,172.6315,-43.5385",
+      "raw_path": "C:\\Users\\Culle\\AppData\\Local\\beamng-earth-2\\benchmarks\\01-baseline\\routes-osm-map\\southern_rural-154842cabeaf.osm",
+      "category_coverage": "unverified; scenario label is not source or engine evidence",
+      "query_sha256": "154842cabeaf143d34b004b19ca79039b41c3457d07d47429b2f07d090d9023a",
+      "osm_way_id": 777634273,
+      "osm_version": 7,
+      "osm_timestamp": "2025-09-20T01:22:30Z",
+      "tags": {
+        "cruising:conditional": "no @ (22:00-05:00)",
+        "cycleway:left": "lane",
+        "highway": "primary",
+        "lanes": "3",
+        "maxspeed": "50",
+        "name": "Moorhouse Avenue",
+        "oneway": "yes",
+        "sidewalk:left": "separate",
+        "sidewalk:right": "no",
+        "surface": "asphalt"
+      },
+      "node_ids": [
+        1285879073,
+        9369347048
+      ],
+      "coordinates_lat_lon": [
+        [
+          -43.5398781,
+          172.6291049
+        ],
+        [
+          -43.53988,
+          172.6299562
+        ]
+      ],
+      "length_m": 68.62,
+      "nearest_vertex_to_center_m": 13.8,
+      "direction": "OSM way order, reversed only for oneway=-1",
+      "status": "source_resolved_engine_drivability_pending",
+      "raw_sha256": "33a2365c9c3a48e9d74051607828a2ded499b351fd8de9f77957a122c46a9869",
+      "raw_bytes": 393417,
+      "osm_base_timestamp": null,
+      "saved_file_mtime_utc": "2026-10-26T18:28:05.286972+00:00",
+      "acquisition_time_note": "Local saved-file mtime; copied files may have later mtime. OSM element timestamps/version are retained separately."
+    },
+    {
+      "scenario_id": "antimeridian",
+      "synthetic": true,
+      "coordinates_lat_lon": [
+        [
+          0,
+          179.999
+        ],
+        [
+          0,
+          -179.999
+        ]
+      ],
+      "status": "coordinate seam fixture only; no road or engine route"
+    }
+  ]
+}

@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "template_only": false,
+  "verified_on": "2026-10-26",
+  "common_contract": [
+    "coverage",
+    "source_revision",
+    "acquired_at",
+    "license",
+    "crs",
+    "vertical_datum",
+    "units",
+    "resolution",
+    "confidence",
+    "nodata",
+    "sha256"
+  ],
+  "sources": [
+    {
+      "id": "osm_layercake_highways",
+      "state": "implemented_verified_schema",
+      "role": "road_semantics",
+      "global": true,
+      "license": "ODbL-1.0",
+      "homepage": "https://layercake.openstreetmap.us/layers/highways/",
+      "download": "https://data.openstreetmap.us/layercake/highways.parquet",
+      "access": "selective_geoparquet",
+      "revision": "ETag ac4e0d5fc5b39ef28c01f3efebb51198-5536 (2026-10-25 snapshot)",
+      "fields_to_consider": [
+        "tracktype",
+        "access",
+        "motor_vehicle",
+        "crossing",
+        "cycleway",
+        "cycleway:left",
+        "cycleway:right"
+      ],
+      "fallback": "existing normalized road defaults",
+      "normalization_version": 5,
+      "schema_footer_sha256": "8b5c25b8c3b7484bb4476227b051d881a6a9dbcfa1eb815af38abb061b6a3383"
+    },
+    {
+      "id": "glc_fcs10_2023",
+      "state": "implemented_prepared_subset_opt_in",
+      "role": "land_cover_functional_type",
+      "global": true,
+      "license": "CC-BY-4.0",
+      "homepage": "https://zenodo.org/records/14729665",
+      "nominal_resolution_m": 10,
+      "revision": "GLC_FCS10-2023-v1-Zenodo-14729665",
+      "access": "offline_archive_preparation",
+      "fallback": "existing ESA WorldCover",
+      "provider_id": "glc_fcs10",
+      "sample_archive_sha256": "60ad302c2e103fb828e2afed348826226db1417704a0902e5e854eaa55a4fae2",
+      "missing_semantics": "TIFF declares no nodata; only 30 verified legend codes are classified"
+    },
+    {
+      "id": "soilgrids",
+      "state": "implemented_fixture_validated_live_mask_pending",
+      "role": "topsoil_composition",
+      "global": true,
+      "license": "CC-BY-4.0",
+      "homepage": "https://docs.isric.org/globaldata/soilgrids/",
+      "download": "https://files.isric.org/soilgrids/latest/data/",
+      "nominal_resolution_m": 250,
+      "revision": "SoilGrids 2.0; exact prepared input SHA256 pinned per property",
+      "properties": [
+        "sand",
+        "clay",
+        "cfvo"
+      ],
+      "depth": "0-5cm",
+      "statistic": "mean",
+      "access": "raster_download_or_WCS_then_prepare",
+      "runtime_rest": false,
+      "fallback": "existing material defaults",
+      "provider_id": "soilgrids",
+      "units": {
+        "sand": "g/kg",
+        "clay": "g/kg",
+        "cfvo": "cm3/dm3"
+      },
+      "native_crs": "Interrupted Goode Homolosine WGS84 (actual WKT/PROJ; service alias 152160 is not EPSG)",
+      "native_nodata": -32768,
+      "live_limit": "WCS format and reprojection verified; omitted nodata tag/zero ambiguity prevents scientific mask validation"
+    },
+    {
+      "id": "jrc_global_surface_water",
+      "state": "implemented_bounded_live_prepared_subset",
+      "role": "water_persistence",
+      "global": true,
+      "license": "Copernicus terms; preserve publisher acknowledgment",
+      "homepage": "https://global-surface-water.appspot.com/download",
+      "nominal_resolution_m": 30,
+      "revision": "v1.5",
+      "access": "download_geotiff_then_prepare",
+      "fallback": "existing water vectors",
+      "provider_id": "jrc_gsw",
+      "layer_periods": {
+        "occurrence": "March 1984-December 2024",
+        "seasonality": "2024 (selected annual file)"
+      },
+      "nodata": 255,
+      "valid_zero": true,
+      "live_ingestion": "bounded local ZSTD GeoTIFF preparation with Rasterio; lightweight COG reader does not support ZSTD"
+    },
+    {
+      "id": "hydrorivers",
+      "state": "optional_later",
+      "role": "river_topology",
+      "global": true,
+      "license": "HydroSHEDS terms; inspect release license",
+      "homepage": "https://www.hydrosheds.org/products/hydrorivers",
+      "revision": "v1",
+      "access": "released_vector_packages",
+      "fallback": "existing hydrography"
+    },
+    {
+      "id": "globalbuildingatlas",
+      "state": "disabled_pending_license_and_quality_review",
+      "role": "building_height_lod1",
+      "global": true,
+      "license": "Mixed: ODbL-derived polygons and CC-BY-NC-4.0 products; inspect each product",
+      "homepage": "https://github.com/zhu-xlab/GlobalBuildingAtlas",
+      "revision": null,
+      "access": "released_files_only",
+      "viewer_wfs_automation": false,
+      "fallback": "existing Overture/procedural buildings"
+    },
+    {
+      "id": "sketchfab_catalog",
+      "state": "implemented_offline_pipeline_sample_pending",
+      "role": "semantic_visual_assets",
+      "global": false,
+      "license": "Per asset; default verified CC0/CC BY only",
+      "homepage": "https://sketchfab.com/developers/download-api",
+      "revision": "catalog schema v2; bounded shortlist snapshot 2026-10-26",
+      "access": "authenticated_developer_acquisition",
+      "credential_env": "SKETCHFAB_API_TOKEN",
+      "runtime_downloads": false,
+      "fallback": "procedural visuals"
+    }
+  ],
+  "prepared_root_env": "BNGE_SEMANTIC_ROOT",
+  "regional_disable_env": "BNGE_REGIONAL_PROVIDERS=off",
+  "runtime_lookup": "immutable local prepared catalog; NumPy only; explicit catalog adoption on new MapData"
+}

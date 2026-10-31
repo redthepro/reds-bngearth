@@ -25,6 +25,7 @@ local function onState(raw)
   state = d; send('state',wire)
 end
 function M.onStatus(d) status = d end
+function M.devices() net.send({type='voice', action='devices'}) end
 function M.test(on)
   testAt = on == true and clock or -math.huge
   net.send({type='voice', action='mic_test', data={active=on==true}})

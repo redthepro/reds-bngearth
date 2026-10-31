@@ -37,6 +37,13 @@ class BudgetTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"BNGE_BUDGET": "desktop"}):
             self.assertFalse(budget.small(8.0))
 
+    def test_road_processes_by_threads_and_memory(self):
+        self.assertEqual(budget.road_processes(16, 62.0), 4)
+        self.assertEqual(budget.road_processes(12, 16.0), 3)     # (16 GB: not four ~1.5 GB processes)
+        self.assertEqual(budget.road_processes(8, 16.0), 3)
+        self.assertEqual(budget.road_processes(6, 16.0), 2)
+        self.assertEqual(budget.road_processes(16, 8.0), 2)
+
     def test_small_caches(self):
         self.assertFalse(budget.apply(False))
         self.assertEqual(dem.MEM_TILES, self.saved[0], "the desktop sizes stay")

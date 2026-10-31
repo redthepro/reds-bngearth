@@ -121,4 +121,20 @@ T.check(G.announceCmd('http://x/announce', 'f.json', false):match('^curl .* @f%.
   'announceCmd: Linux, in the background')
 T.check(G.announceCmd('http://x/announce', 'f.json', true):match('^start "" /b curl .* >NUL 2>&1$') ~= nil, 'announceCmd: Windows, in the background')
 
+-- the server's time and weather (bngeConfig)
+T.check(G.config().time == nil and G.config().weather == nil, 'time and weather real by default')
+local tc = G.timeConfig('20:30', 0, 1000)
+T.check(tc and math.abs(tc.hours - 20.5) < 1e-9 and tc.speed == 0 and tc.epoch == 1000, 'a fixed time')
+T.check(G.timeConfig('7:05', 60, 5).speed == 60, 'a running clock')
+for _, bad in ipairs({ 'real', '25:00', '12:60', 'noon', '', nil }) do
+  T.check(G.timeConfig(bad, 0, 0) == nil, 'not a time: ' .. tostring(bad))
+end
+G.TIME, G.TIME_SPEED, G.WEATHER = '21:00', 2, 'Rain'
+local c = G.config()
+T.check(c.time and c.time.hours == 21 and c.time.speed == 2 and c.time.epoch == G.started and c.weather == 'rain',
+  'the server\'s time and weather in the players\' settings')
+G.WEATHER = 'tornado'
+T.check(G.config().weather == nil, 'an unknown weather: the real one')
+G.TIME, G.TIME_SPEED, G.WEATHER = 'real', 0, 'real'
+
 T.done('test_beammp_plugin')

@@ -7,6 +7,7 @@
 --   beamngEarth_settings.uiReset()             every setting back to its default
 --   beamngEarth_settings.uiDevSet(name, on)    beamngEarth_settings.uiDevPreset(name)  (dev tools)
 --   beamngEarth_settings.uiCacheClear()         -> { ok, error } (the server's download cache)
+--   beamngEarth_settings.uiPathSet(what, pick, path) -> { ok, error } (the cache folder, the BeamMP launcher)
 --   beamngEarth_settings.setPageExists(true)   (index.js, once the button is registered)
 --   beamngEarth_settings.uiPlaces() / uiPlaceAddHere(name) / uiPlaceAdd(name, "lat, lon") /
 --     uiPlaceRename(id, name) / uiPlaceDelete(id) / uiPlaceGo(id) / uiPlaceGoText("lat, lon") /
@@ -99,6 +100,10 @@ end
 M.defaults = defaults
 values = defaults() -- until load(): the defaults (= today's behaviour)
 
+-- Settings no longer on the page, left in older files: ignored without a warning (gasStations: gas stations are
+-- always on since the user's 2026-10-25 "make gas station always enabled and remove the toggle")
+M.RETIRED = { gasStations = true }
+
 -- A valid value for key, or nil + error. Numbers are clamped to the range; strings that read as a
 -- number or boolean are accepted (the page sends what its controls hold).
 function M.validate(key, v)
@@ -132,7 +137,7 @@ function M.load(path)
   if read and (not FS or not FS.fileExists or FS:fileExists(path or M.FILE)) then ok, data = pcall(read, path or M.FILE) end
   if ok and type(data) == 'table' then
     for k, v in pairs(data) do
-      if k ~= 'version' then
+      if k ~= 'version' and not M.RETIRED[k] then
         local val, err = M.validate(k, v)
         if val ~= nil then values[k] = val else warnings[#warnings + 1] = err end
       end
@@ -359,6 +364,9 @@ function M.uiState()
   local c = core and core.cacheState and core.cacheState() or nil
   status.cache = { line = M.cacheLine(c), clears = c and c.clears or 0, clearedBytes = c and c.clearedBytes or nil,
     clearedText = c and c.clearedBytes and size(c.clearedBytes) or nil }
+  -- the cache folder and the BeamMP launcher (the server's app_paths), asked with the cache numbers
+  if core and core.appPath and cachePolls % M.CACHE_POLL == 1 then core.appPath() end
+  status.paths = core and core.appPathState and core.appPathState() or nil
   local schema = {}
   for _, k in ipairs(M.ORDER) do
     local s = M.SCHEMA[k]
@@ -384,6 +392,17 @@ function M.uiCacheClear()
   local core = ext('beamngEarth_core')
   if not (core and core.cacheClear) then return { ok = false, error = 'mod not loaded' } end
   local sent, why = core.cacheClear()
+  if not sent then return { ok = false, error = why or 'server not connected' } end
+  return { ok = true }
+end
+
+-- "Change..." (pick: the system's file window, on the server's computer) or a typed path ("Use") for the cache folder
+-- (what 'cache') or the BeamMP launcher ('beammp'); the answer comes in status.paths (answers + 1).
+function M.uiPathSet(what, pick, path)
+  if what ~= 'cache' and what ~= 'beammp' then return { ok = false, error = 'unknown path' } end
+  local core = ext('beamngEarth_core')
+  if not (core and core.appPath) then return { ok = false, error = 'mod not loaded' } end
+  local sent, why = core.appPath(what, pick == true, path)
   if not sent then return { ok = false, error = why or 'server not connected' } end
   return { ok = true }
 end
@@ -501,7 +520,9 @@ local function otherPlayers()
   return ok and list or nil
 end
 
+local mapPolledAt = nil    -- when the map last asked for its state (MAP_LOST_S)
 function M.uiMapState()
+  mapPolledAt = os.clock()
   local core = ext('beamngEarth_core')
   local st = core and core._state and core._state() or nil
   local pl = st and st.player
@@ -613,6 +634,11 @@ function M.mapBlockedActions(filter, actions)
   return out
 end
 local mapCtl = nil      -- the stock map's functions while ours has its controls
+-- The map asks for its state every second while it is open (uiMapState). With our controls on and no ask for MAP_LOST_S
+-- the map is gone without its close reaching us (a level load, a UI reload): the car's controls are given back. Left
+-- on, every driving action stayed blocked: the car could not drive, steer or be recovered while the menus and the free
+-- camera still worked (GitHub #252).
+M.MAP_LOST_S = 5
 
 local function mapInput(kind, a, b)
   local gh = rawget(_G, 'guihooks')
@@ -624,6 +650,7 @@ function M.mapControls(on)
   local filter = rawget(_G, 'core_input_actionFilter')
   if on and not mapCtl and bm then
     mapCtl = { bm = bm }
+    mapPolledAt = os.clock()
     for _, f in ipairs({ 'camMoveController', 'camMoveKey', 'zoomInOut', 'controllerZoom', 'zoom', 'onControllerSelect',
         'onChangeUiFilter' }) do mapCtl[f] = bm[f] end
     bm.camMoveController = function(upDown, v) mapInput(upDown and 'move_ud' or 'move_lr', v) end
@@ -775,8 +802,19 @@ local function keepMapMenuActions()
   end
 end
 
+-- Our map's hold on the controls let go (the map is not open any more, or its close never came: MAP_LOST_S).
+local function releaseMap(why)
+  if not mapCtl then return end
+  log('W', 'beamngEarth', 'map controls given back: ' .. why)
+  mapOpen = false
+  M.mapControls(false)
+end
+
 function M.onUpdate()
   if mapOpen then keepMapMenuActions() end
+  if mapCtl and mapPolledAt and os.clock() - mapPolledAt > M.MAP_LOST_S then
+    releaseMap(string.format('the map has not asked for %.0f s', os.clock() - mapPolledAt))
+  end
   if feedbackQ then
     feedbackQ.frames = feedbackQ.frames - 1
     if feedbackQ.frames <= 0 then
@@ -793,6 +831,7 @@ end
 
 -- other extensions (sky, dev) may load after this one: apply again once the level runs
 function M.onClientPostStartMission()
+  releaseMap('a level started')
   appliedView = nil
   M.applyAll()
   local level = rawget(_G, 'getCurrentLevelIdentifier') and getCurrentLevelIdentifier()

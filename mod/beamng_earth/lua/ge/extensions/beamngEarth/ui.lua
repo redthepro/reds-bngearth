@@ -121,8 +121,11 @@ function M.getLatLon(defaultLat, defaultLon)
   return defaultLat, defaultLon
 end
 
+local latLonSet = false   -- a teleport set them this game run (else they are the defaults)
 function M.setLatLon(lat, lon)
   if latPtr then latPtr[0], lonPtr[0] = lat, lon end
+  latLonSet = true
 end
+function M.hasLatLon() return latLonSet and latPtr ~= nil end
 
 return M

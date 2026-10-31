@@ -96,6 +96,10 @@ class RulesTest(unittest.TestCase):
         # a value not understood at all is the class's own surface, not the dirt road
         self.assertEqual(roads.surface_kind("residential", "whatever"), "paved")
         self.assertEqual(roads.surface_kind("track", "whatever"), "dirt")
+        self.assertEqual(roads.surface_kind("unclassified", "wbm"), "gravel")
+        self.assertEqual(roads.surface_kind("unclassified", "laterite"), "gravel")
+        self.assertEqual(roads.surface_kind("residential", "interlocking"), "cobble")
+        self.assertEqual(roads.surface_kind("primary", "bitumen"), "paved")
 
     def test_surface_token(self):
         self.assertEqual(roads.surface_token("sett:pattern"), "sett")
@@ -110,6 +114,18 @@ class RulesTest(unittest.TestCase):
                      surfaces=[(0, "concrete"), (1, "asphalt")])
         s = roads.road_specs(f, urban_fn=lambda lat, lon: np.ones(len(lat), bool))
         self.assertEqual([sp.surf for sp in s], ["concrete", "asphalt"])
+
+    def test_sidewalks_follow_the_map_tag(self):
+        f = features([[(0, 0), (100, 0)]] * 5, ["residential"] * 5)
+        f.attrs["osm_sidewalk"] = np.array(["both", "left", "right", "separate", ""], object)
+        town = lambda lat, lon: np.ones(len(lat), bool)                                  # noqa: E731
+        s = roads.road_specs(f, urban_fn=town)
+        self.assertEqual([roads.has_sidewalks(sp) for sp in s], [True, True, True, False, True])
+        self.assertEqual(roads.walk_sides(s[1]), (1,))
+        self.assertEqual(roads.walk_sides(s[2]), (-1,))
+        self.assertEqual(roads.walk_sides(s[4]), (1, -1))                                # untagged: the town rule
+        rural = roads.road_specs(features([[(0, 0), (100, 0)]], ["residential"]))[0]
+        self.assertFalse(roads.has_sidewalks(rural))                                     # untagged, rural: none
 
     def test_rock_and_grass_live_in_the_ground_layer(self):
         def spec(surf):
@@ -354,6 +370,30 @@ class BuildTileTest(unittest.TestCase):
         self.assertTrue(any(abs(y - (yc + roads.CENTRE["gap"])) < 0.01 for y in ys) and
                         any(abs(y - (yc - roads.CENTRE["gap"])) < 0.01 for y in ys), (yc, ys))
 
+    def test_walk_cuts_open_the_sidewalk(self):
+        # a gas station's made-up driveway (gasstations.tile_sites cuts): the sidewalk it crosses is cut, not the one
+        # across the street (the user, 2026-10-23: "the drive you added sidewalk blocks it")
+        f = features([[(-300, 100), (300, 100)]], ["secondary"])
+        urban = lambda la, lo: np.ones(np.shape(la), bool)      # noqa: E731
+
+        def spans(walks, south):            # a run of that side past x = 50 (a straight run: its ends only)
+            return [w for w in walks if (w["pts"][:, 1].mean() < 100) == south
+                    and w["pts"][:, 0].min() < 47.0 and w["pts"][:, 0].max() > 53.0]
+
+        def south_near(walks):
+            return spans(walks, True)
+
+        def north_near(walks):
+            return spans(walks, False)
+        plain, cut = [], []
+        roads.build_tile(FRAME, 0, 0, [f], flat, urban, walks=plain)
+        roads.build_tile(FRAME, 0, 0, [f], flat, urban, walks=cut, walk_cuts=[(np.array([(50.0, 70.0), (50.0, 95.5)]), 4.0)])
+        self.assertTrue(south_near(plain))
+        self.assertFalse(south_near(cut), "a gap where the driveway crosses")
+        self.assertTrue(north_near(cut), "the far sidewalk kept")
+        self.assertTrue(all(c for w in cut for c, end in zip(w["caps"], (w["pts"][0], w["pts"][-1]))
+                            if abs(end[0] - 50) < 6 and end[1] < 100), "the cut ends capped")
+
     def test_sidewalk_mesh_runs_and_drains(self):
         import tempfile
         import cdae
@@ -505,14 +545,13 @@ class BuildTileTest(unittest.TestCase):
         self.assertEqual(len(cw), 4, "a crosswalk on each arm")
         self.assertTrue(sum(len(w["ramps"]) for w in runs) + sum(len(c["ramps"]) for c in corners) >= 8,
                         "two curb ramps per crosswalk")
-        # residential streets with parking: curb extensions (bulb-outs) at the corners
-        wd = roads.carriageway("residential", "paved", True) / 2 - roads.PARKING_M
+        # residential streets with parking: no curb extensions (GitHub #208), the corners at the parking curb
+        wd = roads.carriageway("residential", "paved", True) / 2
         cls_ = [np.array(c["n"])[:, :2] for c in chunks if c["m"] == roads.LOOK["paved"]["m"] and c["n"]]
         for c in corners:
             d = np.min([junctions._seg_dist(c["arc"][:, :2], ln) for ln in cls_], axis=0)
-            self.assertGreater(float(d.min()), wd - 0.1, "the curb never on the driving lanes")
-            self.assertLess(float(d.min()), wd + 0.3, "the bulb reaches the driving lanes")
-            self.assertEqual(len(c["ramps"]), 2, "the crosswalks land on the bulbs")
+            self.assertGreater(float(d.min()), wd - 0.1, "the curb never on the parking lane")
+            self.assertEqual(len(c["ramps"]), 0, "the crosswalks land on the sidewalk runs, not the corners")
         for c in chunks:
             if c["m"] == junctions.CROSSWALK["m"]:
                 self.assertAlmostEqual(np.hypot(*np.subtract(c["n"][0][:2], c["n"][-1][:2])), 2 * wd, delta=0.3)
@@ -738,6 +777,37 @@ class TrackerTest(unittest.TestCase):
         want = {(1, f"{tx}_{ty}") for tx, ty in roads.tiles_near(0, 0, roads.SEND_M)}
         self.assertEqual(keys, want)
         self.assertEqual(len(built), len(want), "each tile built once")
+
+    def test_stuck_build_said_once(self):
+        """A road tile whose build never ends (a stuck worker: "roads & buildings 0/36" with an empty log, GitHub #241)
+        is logged once it has run TILE_STUCK_S."""
+        import threading
+        from unittest import mock
+        conn = FakeConn()
+        tr = roads.Tracker()
+        gate = threading.Event()
+
+        def build(aid, tx, ty):
+            gate.wait(5)
+            return None
+        clock = [1000.0]
+
+        async def go():
+            loop = asyncio.get_running_loop()
+            with mock.patch.object(roads.time, "monotonic", lambda: clock[0]):
+                tr.on_pose(conn, 1, 0.0, 0.0, loop, build)
+                clock[0] += roads.TILE_STUCK_S + 1
+                with self.assertLogs("earthd.roads", level="WARNING") as logs:
+                    tr.on_pose(conn, 1, 0.0, 0.0, loop, build)
+                    tr.on_pose(conn, 1, 0.0, 0.0, loop, build)
+            gate.set()
+            await asyncio.sleep(0.05)
+            return logs
+        logs = asyncio.run(go())
+        stuck = [m for m in logs.output if "may be stuck" in m]
+        self.assertEqual(len(stuck), len(set(stuck)), "each tile once")
+        self.assertTrue(stuck)
+        tr.close()
 
     def test_empty_and_failed_tiles_not_built_at_every_pose(self):
         # (from PR #64) a tile with no roads came back None and was built again at every pose; a failed one too, at
@@ -1018,6 +1088,57 @@ class PaintRoadsTest(unittest.TestCase):
         lo = LON + np.array([-200.0, 200.0]) / M_LON
         out = sf.paint_roads(idx, lat, lon, [f], 2.0, extra=[(la, lo, roads.Spec(7.0, "paved", False, "residential"))])
         self.assertEqual(int(out[64, 10]), sf.ASPHALT)
+
+
+class UrbanBesideTest(unittest.TestCase):
+    def test_a_highway_through_a_built_up_strip_is_not_a_town_street(self):
+        # the land cover counts the pavement itself as built-up: a road is urban only with built-up land beside it too
+        # (GitHub #267: the Eyre Highway through Eucla got footpaths and street furniture)
+        f = features([[(0, 0), (400, 0)], [(0, 100), (400, 100)]], ["trunk", "residential"])
+
+        def pavement_only(lat, lon):            # built-up within 6 m of the first road's line, and around the second
+            e, n, _ = FRAME.geodetic_to_enu(np.asarray(lat), np.asarray(lon), 0.0)
+            n = np.asarray(n)
+            return (np.abs(n) < 6.0) | (np.abs(n - 100.0) < 60.0)
+        specs = roads.road_specs(f, pavement_only)
+        self.assertFalse(specs[0].urban, "built-up only on its own pavement")
+        self.assertTrue(specs[1].urban, "built-up beside it")
+        self.assertFalse(roads.has_sidewalks(specs[0]))
+
+    def test_a_trunk_needs_a_town_on_both_sides(self):
+        # a roadhouse on one side of a highway is no town's main street (Eucla: one side 33 %, the other 0 %)
+        f = features([[(0, 0), (400, 0)], [(0, 200), (400, 200)]], ["trunk", "residential"])
+
+        def one_side(lat, lon):                 # the pavement and 40 m north of each road built-up
+            e, n, _ = FRAME.geodetic_to_enu(np.asarray(lat), np.asarray(lon), 0.0)
+            n = np.asarray(n)
+            return ((n > -6.0) & (n < 40.0)) | ((n > 194.0) & (n < 240.0))
+        specs = roads.road_specs(f, one_side)
+        self.assertFalse(specs[0].urban, "a trunk with built-up land on one side only")
+        self.assertTrue(specs[1].urban, "a street with houses on one side is still a town street")
+        both = roads.road_specs(f, lambda lat, lon: np.ones(np.shape(lat), bool))
+        self.assertTrue(both[0].urban and roads.has_sidewalks(both[0]), "a town's main street on a highway")
+
+
+class TileNeedsTest(unittest.TestCase):
+    def test_the_cells_a_tile_asks_for(self):
+        frame = geodesy.EnuFrame(43.2965, 5.3698)
+        own = set(roads.cells_of_tile(frame, 0, 0))
+        needs = roads.tile_needs(frame, 0, 0, buildings=True, widths=True, water_ring=3)
+        self.assertEqual(len(needs), len(set(needs)), "no (cell, layer) twice")
+        self.assertEqual({k for k, ly in needs if ly == "building_parts"}, own)   # the tile's own cells first
+        self.assertEqual({ly for k, ly in needs[:len(own) * 5]}, {"roads", "infrastructure", "buildings",
+                                                                    "building_parts", "water"})
+        xs = sorted({k.x for k in own})
+        ring = {k for k, ly in needs if ly == "buildings"}
+        self.assertEqual(sorted({k.x for k in ring}), list(range(xs[0] - 2, xs[-1] + 3)))
+        water = {k for k, ly in needs if ly == "water"}
+        self.assertEqual(sorted({k.x for k in water}), list(range(xs[0] - 3, xs[-1] + 4)))
+        far = [i for i, (k, ly) in enumerate(needs) if ly == "water" and k not in own]
+        self.assertEqual(far, list(range(far[0], len(needs))), "the water ring last")
+        bare = roads.tile_needs(frame, 0, 0, buildings=False, widths=False, water_ring=0)
+        self.assertEqual({ly for _, ly in bare}, {"roads", "infrastructure"})
+        self.assertEqual(sorted({k.x for k, ly in bare if ly == "roads"}), list(range(xs[0] - 1, xs[-1] + 2)))
 
 
 class InGroundTest(unittest.TestCase):

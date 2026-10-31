@@ -44,7 +44,7 @@ def prepare(frame, cx, cy, size, q, out_dir, name, ter_name, *, sample,
             ground=None, provisional_ground=None, grader=None, surface=None,
             widths=None, sea=None, arch=None, holes=None, open_tunnels=None,
             chunks=None, provisional=False, t0=None, cpu_stages=False,
-            cache_dir=None, plan_context=None, settings=None, cache_kind="demand", checkpoint=None):
+            cache_dir=None, plan_context=None, settings=None, cache_kind="demand", checkpoint=None, ground_at=(0.0, 0.0)):
     """Return the callers' existing info dict after preparing their files.
 
     arch(elev) optionally returns a terrain sampler; holes(elev, keep, idx, info)
@@ -76,7 +76,7 @@ def prepare(frame, cx, cy, size, q, out_dir, name, ter_name, *, sample,
     writer = (lambda path, u, q: heightmap.quantized_grid(u, q)) if compiled else None
     info = heightmap.generate(frame, gen, os.path.join(out_dir, name), cx, cy, q=q,
                               size=size, keep=keep, chunks=None if provisional else chunks,
-                              png_writer=writer)
+                              png_writer=writer, ground_at=ground_at)
     check()
     stages = {"heights": time.perf_counter() - t0, "grading": grade_s[0]}
     if cpu_stages:
@@ -99,6 +99,8 @@ def prepare(frame, cx, cy, size, q, out_dir, name, ter_name, *, sample,
                                          open_tunnels(keep) if open_tunnels is not None else [])
         if hasattr(surface, "lots"):
             idx = surfacemod.paint_lots(idx, keep["lat"], keep["lon"], surface.lots(keep["lat"], keep["lon"]))
+        if hasattr(surface, "fuel_pads"):
+            idx = surfacemod.paint_pads(idx, keep["lat"], keep["lon"], surface.fuel_pads(keep["lat"], keep["lon"]))
         stages["roadPaint"] = time.perf_counter() - start
         check()
         # Do not let portal holes mutate the surface-mask snapshot.

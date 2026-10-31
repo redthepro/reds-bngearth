@@ -289,11 +289,16 @@ do
   other.cmds = {}
   nodesGE.handle('g:2-0:{"x":1}')
   nodesGE.handle('n:1-0:{"own":1}')
-  T.check(#passed == 2 and #other.cmds == 0, 'break groups and our own cars: as BeamMP does')
+  T.check(#passed == 1 and #other.cmds == 0, 'break groups: as BeamMP does; our own car\'s full damage: never to BeamMP')
   core_camera = { getPosition = function() return vec3(100, 0, 0) end }     -- (our camera at the player)
   other.pos = vec3(150, 0, 0)          -- 50 m from the camera: we see its crash
   nodesGE.handle('n:2-0:{"beams":{}}')
-  T.check(#passed == 2 and #other.cmds == 0, 'another player\'s full damage: kept, nothing put on yet')
+  T.check(#passed == 1 and #other.cmds == 0, 'another player\'s full damage: kept, nothing put on yet')
+  -- a car not known here yet (BeamMP still spawning it): never to BeamMP's applyNodes (BeamNG 0.40: a fatal error in
+  -- the copy's vehicle Lua), kept by its BeamMP id and adopted once known
+  nodesGE.handle('n:3-0:{"beams":{"7":1}}')
+  T.check(#passed == 1, 'an unknown car\'s full damage: not to BeamMP')
+  ms.adoptNodes()           -- (still unknown: kept)
   ms.update(ms.HIDE_S, anchor, { x = 100, y = 0, z = 0 })
   T.check(#other.cmds == 0, 'near our camera: the copy keeps what our game worked out')
   other.pos = vec3(100 + ms.SYNC_RANGE_M + 10, 0, 0)
@@ -313,7 +318,7 @@ do
   -- the dents grown in by the morph steps, which M.update sends MORPH_STEPS frames in a row
   do
     local broke, lens, deformedN, morphFrom = {}, { [0] = 1, [1] = 1, [2] = 2 }, 0, nil
-    local env = { type = type, pairs = pairs, tonumber = tonumber, tostring = tostring, pcall = pcall,
+    local env = { type = type, pairs = pairs, tonumber = tonumber, tostring = tostring, pcall = pcall, rawset = rawset, rawget = rawget,
       jsonDecode = function() return { nodes = { { { x = 0, y = 0, z = 0 } } },
         beams = { { 1.5, false, 0.2 }, { 1, true, 0 }, { 2, false, 0 } } } end,
       mime = { unb64 = function(x) return x end },
@@ -324,6 +329,7 @@ do
         setNodePosition = function() error('no node positions') end },
       beamstate = { beamBroken = function() end, onBeamDeformed = function() deformedN = deformedN + 1 end } }
     local fn = assert(loadstring(other.cmds[#other.cmds]))
+    env._G = env
     setfenv(fn, env)
     fn()
     T.check(broke[1] and lens[0] == 1 and deformedN == 0, 'the broken beams at once, the dents not yet')
@@ -380,4 +386,42 @@ do
   T.check(back == 0, 'copy check: back near its figure: the wait starts over')
 end
 
+do -- a car switched off here: its BeamMP name tag hidden with it, shown again after
+  local rec = {}
+  local saved = rawget(_G, 'MPVehicleGE')
+  MPVehicleGE = { getVehicleByGameID = function(gid) return gid == 7 and rec or nil end }
+  ms.nametag(7, true)
+  T.check(rec.hideNametag == true, 'hidden with the car')
+  ms.nametag(7, false)
+  T.check(rec.hideNametag == nil, 'shown again')
+  ms.nametag(8, true)                       -- (a car BeamMP does not know: nothing)
+  MPVehicleGE = nil
+  ms.nametag(7, true)                       -- (no BeamMP: nothing)
+  MPVehicleGE = saved
+end
+do -- no car (BeamMP joins without one): the free camera on the ground, and at a teleport's target on the ground again,
+   -- lower ground too (it was left hundreds of metres up and the car spawned there fell: the user, 2026-10-24)
+  local savedBe, savedCam, savedGet, savedQ = rawget(_G, 'be'), rawget(_G, 'core_camera'), rawget(_G, 'getPlayerVehicle'), rawget(_G, 'quatFromDir')
+  local ground, put = 100, nil
+  be = { getSurfaceHeightBelow = function(_, p) return ground end }
+  core_camera = { setPosRot = function(_, x, y, z) put = { x, y, z } end }
+  getPlayerVehicle = function() return nil end
+  quatFromDir = quatFromDir or function() return { x = 0, y = 0, z = 0, w = 1 } end
+  ms.onPostJoin()
+  ms.placeCamera({ x = 5, y = 5, z = 0 }, 'A')
+  T.check(put and put[3] == 103, 'first: on the ground at the origin')
+  put = nil
+  ms.placeCamera({ x = 0, y = -8, z = 400 }, 'A')
+  T.check(put == nil, 'a free camera flown up stays')
+  ms.onTeleport(30, 40)
+  ground = 2
+  ms.placeCamera({ x = 0, y = -8, z = 103 }, 'A')
+  T.check(put == nil, 'the teleport\'s anchor not in yet: not moved')
+  ms.placeCamera({ x = 0, y = -8, z = 103 }, 'B')
+  T.check(put and put[1] == 30 and put[2] == 40 and put[3] == 5, 'new anchor: at the target, 3 m over its ground')
+  put = nil
+  ms.placeCamera({ x = 30, y = 40, z = 500 }, 'C')
+  T.check(put == nil, 'a rebase (no teleport): a free camera keeps its height')
+  be, core_camera, getPlayerVehicle, quatFromDir = savedBe, savedCam, savedGet, savedQ
+end
 T.done('test_mpsession')
